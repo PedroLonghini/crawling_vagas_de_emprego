@@ -1,0 +1,2 @@
+alvo_id,empresa_nome,fonte,url_inicial,ativa,limite_paginas,status_politica,licenca_nome,licenca_url,atribuicao_obrigatoria,republicacao_permitida,autorizacao_escrita,referencia_autorizacao
+xp_inc_oportunidades,XP Inc.,pagina_carreiras,https://job-boards.greenhouse.io/xpinc,true,10,aprovada,,,false,true,true,AUT-XP-INTERNA-2026-09-18

@@ -1,0 +1,173 @@
+# Define qual ferramenta constrói e instala o pacote.
+[build-system]
+
+# O setuptools transforma a pasta src em pacote Python instalável.
+requires = ["setuptools>=69"]
+
+# É a função que o Python utilizará para construir o pacote.
+build-backend = "setuptools.build_meta"
+
+
+# Informações principais do projeto.
+[project]
+
+# Nome usado durante a instalação.
+name = "observatorio-vagas"
+
+# Versão atual.
+# 0.1.0 significa que o projeto ainda está em desenvolvimento inicial.
+version = "0.1.0"
+
+# Explicação curta.
+description = "Coleta e inteligência de vagas, salários e cobertura do Empregos."
+
+# Usa o README como documentação do pacote.
+readme = "README.md"
+
+# Impede a instalação em versões antigas demais do Python.
+requires-python = ">=3.11"
+
+# Bibliotecas obrigatórias para a nova aplicação.
+dependencies = [
+    "tzdata>=2024.1; sys_platform == 'win32'",
+    # Lê e valida configurações e variáveis de ambiente.
+    "pydantic-settings>=2.2,<3",
+
+    # Executa as futuras requisições HTTPS para a API do Empregos.
+    #
+    # O cliente permanece em simulação por padrão e somente usa
+    # esta biblioteca quando todas as travas de publicação são abertas.
+    "requests>=2.31,<3",
+]
+
+
+# Dependências opcionais.
+# Não são necessárias em toda instalação.
+[project.optional-dependencies]
+javascript = ["playwright>=1.48,<2"]
+
+# Ferramentas utilizadas durante o desenvolvimento.
+dev = [
+    # Executa testes.
+    "pytest>=8,<10",
+
+    # Calcula quais linhas foram testadas.
+    "pytest-cov>=5,<8",
+
+    # Verifica e formata o código.
+    "ruff>=0.6,<1",
+]
+# Bibliotecas necessárias somente para executar a demonstração visual.
+#
+# Estamos criando um grupo separado chamado "demo".
+# Assim, um servidor que executa somente o crawler não é obrigado
+# a instalar as bibliotecas da tela visual.
+demo = [
+    # Pandas trabalha com dados em formato de tabela.
+    #
+    # Ele será usado para:
+    # - abrir o arquivo CSV;
+    # - filtrar empresas;
+    # - calcular salários;
+    # - contar vagas;
+    # - agrupar vagas por cidade, estado e cargo.
+    "pandas>=2.2,<3",
+
+    # Streamlit transforma um programa Python em uma página web.
+    #
+    # Ele será usado para criar:
+    # - filtros;
+    # - botões;
+    # - tabelas;
+    # - indicadores;
+    # - gráficos.
+    "streamlit>=1.40,<2",
+]
+# Bibliotecas usadas pela camada de persistência no MongoDB.
+#
+# Este grupo fica separado porque:
+# - nem todo teste precisa acessar o banco;
+# - o dashboard pode ser executado sem escrever dados;
+# - futuramente podemos trocar o MongoDB sem alterar todo o projeto.
+mongodb = [
+    # PyMongo é o cliente oficial do MongoDB para Python.
+    #
+    # O extra "[srv]" também permite usar endereços do MongoDB Atlas,
+    # que normalmente começam com:
+    #
+    # mongodb+srv://
+    "pymongo[srv]>=4.6,<5",
+]
+# Bibliotecas utilizadas pelo novo crawler.
+crawler = [
+    # Scrapy controla requisições, concorrência, tentativas,
+    # filas, deduplicação, seletores HTML e estatísticas.
+    "scrapy>=2.17,<3",
+
+    # Extrai texto de documentos PDF públicos.
+    "pypdf>=6.16,<7",
+]
+# Informa que os pacotes Python ficam dentro de src.
+[tool.setuptools.packages.find]
+where = ["src"]
+
+
+# Configura o Pytest.
+[tool.pytest.ini_options]
+
+# -ra mostra um resumo dos testes.
+# --strict-markers impede marcadores escritos incorretamente.
+addopts = "-ra --strict-markers"
+
+# Procura testes somente nesta pasta.
+testpaths = ["tests"]
+
+# Permite encontrar observatorio_vagas dentro de src.
+pythonpath = ["src"]
+
+# Pasta utilizada pelo Pytest para guardar resultados temporários.
+cache_dir = ".pytest_cache"
+
+
+# Configura a medição de cobertura.
+[tool.coverage.run]
+
+# Mede também caminhos de decisões, como if e else.
+branch = true
+
+# Mede somente o código da aplicação.
+source = ["observatorio_vagas"]
+
+
+[tool.coverage.report]
+
+# Mostra as linhas que não foram testadas.
+show_missing = true
+
+# Não exibe arquivos completamente vazios.
+skip_empty = true
+
+
+# Configura o Ruff.
+[tool.ruff]
+
+# Limite de caracteres por linha.
+line-length = 100
+
+# O código deve ser compatível com Python 3.11 ou superior.
+target-version = "py311"
+
+# Pastas que o Ruff deve analisar.
+src = ["src", "tests"]
+
+
+# Regras verificadas pelo Ruff.
+[tool.ruff.lint]
+
+# E: erros de estilo.
+# F: erros como imports e variáveis inválidas.
+# I: organização dos imports.
+# UP: modernização de sintaxe.
+# B: problemas comuns detectados pelo flake8-bugbear.
+# SIM: simplificações seguras.
+select = ["E", "F", "I", "UP", "B", "SIM"]

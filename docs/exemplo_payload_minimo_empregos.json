@@ -1,0 +1,12 @@
+{
+  "company": {
+    "applyUrl": "https://carreiras.empresa-exemplo.com.br/vagas/desenvolvedor-python/candidatura",
+    "name": "Empresa Exemplo Tecnologia Ltda."
+  },
+  "externalJobPostingId": "empresa-exemplo:desenvolvedor-python:2026-001",
+  "title": "Pessoa Desenvolvedora Python Pleno",
+  "description": "Buscamos uma pessoa desenvolvedora Python para criar e manter serviços de dados. A pessoa trabalhará em parceria com produto e engenharia e participará de revisões de código.",
+  "location": {
+    "address": "Avenida Paulista, 1000, Bela Vista, São Paulo, SP"
+  }
+}

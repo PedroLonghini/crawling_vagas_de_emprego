@@ -1,0 +1,72 @@
+# Variáveis de ambiente / credenciais
+.env
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Ambiente virtual
+venv/
+.venv/
+env/
+
+# VS Code
+.vscode/
+
+# macOS
+.DS_Store
+
+# Logs
+*.log
+
+# Cache
+.cache/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Pytest
+.pytest_cache/
+.pytest_cache_*/
+.pytest_tmp*/
+.coverage
+htmlcov/
+
+# Ferramentas de qualidade e validação local
+.ruff_cache/
+.codex_validation/
+.docx_render_project/
+
+# Build Python
+build/
+dist/
+*.egg-info/
+
+# Ferramentas desta tarefa local
+/work/
+/outputs/
+
+# Arquivos temporários
+*.tmp
+/tmp/
+/t/
+
+# Rascunhos e execuções locais do Codex
+/.c*/
+/.call*/
+/.cqd*/
+/.lv*/
+/.nrv*/
+/.pt_opt/
+/.t*/
+
+# Banco/dumps locais
+*.db
+*.sqlite
+*.sqlite3
+
+# Dados grandes gerados pelo scraper
+dados/
+data/

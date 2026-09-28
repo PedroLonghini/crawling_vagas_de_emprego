@@ -1,0 +1,545 @@
+{
+  "documento": {
+    "titulo": "Demonstração do processo de crawling e tratamento de vagas",
+    "versao": "1.0",
+    "natureza": "documentacao_com_exemplos_ficticios",
+    "aviso": "Os anúncios, URLs, datas e números deste documento são exemplos. Não representam uma coleta real nem uma autorização real de republicação.",
+    "base": "Fluxos e regras inspecionados no código local do projeto.",
+    "executa_coleta": false,
+    "altera_mongodb": false,
+    "envia_api": false
+  },
+  "objetivo": "Encontrar vagas nas fontes configuradas, coletar evidências, extrair e normalizar dados, comparar observações e preparar somente vagas elegíveis para revisão e publicação no Empregos.",
+  "glossario": {
+    "fonte": "Origem dos anúncios, como um portal ou plataforma.",
+    "alvo": "Uma entrada do catálogo, com ID, URL, limites e política de acesso.",
+    "listagem": "Página que reúne links ou cards de várias vagas.",
+    "detalhe": "Página com informações de uma vaga; pode conter mais de um JobPosting.",
+    "crawling": "Navegação pelas páginas e download dos conteúdos.",
+    "extracao": "Conversão do HTML, JSON ou documento em campos de uma vaga.",
+    "adaptador": "Código que reconhece a estrutura de uma fonte.",
+    "raw": "Corpo e metadados preservados para permitir auditoria e reprocessamento.",
+    "json_ld": "Dados estruturados publicados em scripts HTML; JobPosting representa uma vaga.",
+    "dom_renderizado": "HTML após a execução do JavaScript no navegador.",
+    "hash_sha256": "Identificador calculado a partir do conteúdo, usado para integridade e reutilização de corpos idênticos.",
+    "anuncio": "Registro associado à fonte e ao identificador externo.",
+    "vaga_canonica": "Representação normalizada vinculada a uma empresa.",
+    "payload": "Objeto preparado para envio à API.",
+    "elegibilidade": "Resultado das verificações de dados e política de publicação."
+  },
+  "fluxo": [
+    {
+      "ordem": 1,
+      "etapa": "catalogo",
+      "entrada": "config/catalogo_fontes.csv",
+      "processamento": [
+        "Carregar alvos e políticas.",
+        "Isolar linhas inválidas no carregamento tolerante.",
+        "Selecionar alvos ativos e autorizados para coleta.",
+        "Com --somente-republicaveis, selecionar apenas os liberados pela política configurada."
+      ],
+      "saida": "Alvos executáveis.",
+      "codigo": [
+        "src/observatorio_vagas/crawling/catalog.py",
+        "scripts/processar_lote.py"
+      ]
+    },
+    {
+      "ordem": 2,
+      "etapa": "requisicoes",
+      "entrada": "URLs dos alvos.",
+      "processamento": [
+        "Validar domínio e política.",
+        "Respeitar robots.txt, intervalos, concorrência e limites.",
+        "Repetir falhas temporárias conforme configuração; registrar falhas definitivas."
+      ],
+      "saida": "Respostas HTTP ou falhas identificadas.",
+      "codigo": [
+        "src/observatorio_vagas/crawling/request_factory.py",
+        "src/observatorio_vagas/crawling/middlewares.py",
+        "src/observatorio_vagas/crawling/settings.py"
+      ]
+    },
+    {
+      "ordem": 3,
+      "etapa": "javascript_opcional",
+      "entrada": "HTML com resposta de sucesso e --javascript ativo.",
+      "processamento": [
+        "Executar scripts com Chromium.",
+        "Esperar estabilidade, consultas pendentes e componentes ocupados dentro do prazo.",
+        "Nas listagens, clicar em controles reconhecidos de carregar mais e rolar a página e componentes.",
+        "Capturar conteúdo após cliques e rolagem.",
+        "Preservar links e JobPosting removidos por listas virtualizadas.",
+        "Registrar domínios externos bloqueados e motivo de parada."
+      ],
+      "saida": "HTML renderizado ou HTML original em caso de falha.",
+      "codigo": [
+        "src/observatorio_vagas/crawling/javascript.py"
+      ],
+      "limitacoes": [
+        "Não reconhece todos os componentes.",
+        "Recursos externos continuam bloqueados.",
+        "Páginas além do orçamento de renderização seguem com HTML normal."
+      ]
+    },
+    {
+      "ordem": 4,
+      "etapa": "descoberta_e_paginacao",
+      "entrada": "HTML normal ou renderizado.",
+      "processamento": [
+        "Reconhecer links HTML, JSON-LD, scripts e atributos de cards.",
+        "Separar navegação, detalhes e links de candidatura/compartilhamento.",
+        "Normalizar URLs e remover rastreamento conhecido, preservando IDs e paginação.",
+        "Agendar detalhes e próximas listagens conforme o orçamento.",
+        "Retomar pendências quando aplicável."
+      ],
+      "saida": "Candidatos e downloads de detalhes.",
+      "codigo": [
+        "src/observatorio_vagas/crawling/adaptadores/generico.py",
+        "src/observatorio_vagas/crawling/descoberta.py",
+        "src/observatorio_vagas/crawling/paginacao.py",
+        "src/observatorio_vagas/crawling/spiders/catalogo_fontes.py"
+      ]
+    },
+    {
+      "ordem": 5,
+      "etapa": "armazenamento_bruto",
+      "entrada": "Resposta entregue ao pipeline.",
+      "processamento": [
+        "Calcular SHA-256.",
+        "Reutilizar corpo idêntico pelo hash.",
+        "Salvar metadados do evento com URL, alvo, status, tipo de página e momento da coleta."
+      ],
+      "saida": {
+        "corpo": "data/raw/corpos/<prefixo>/<hash>.bin",
+        "metadados": "data/raw/respostas/<fonte>/<ano>/<mes>/<dia>/<id_evento>.json"
+      },
+      "observacao": "Quando há renderização, o corpo entregue pode ser o DOM renderizado e conter a seção identificada com descobertas preservadas. Isso não é uma captura byte a byte do HTML original do servidor.",
+      "codigo": [
+        "src/observatorio_vagas/crawling/raw_storage.py"
+      ]
+    },
+    {
+      "ordem": 6,
+      "etapa": "extracao",
+      "entrada": "Inventário de respostas brutas.",
+      "processamento": [
+        "Filtrar alvo, período de coleta, status e tipo de conteúdo.",
+        "Verificar integridade do corpo pelo hash.",
+        "Excluir conteúdo identificado como concurso público ou não empregatício.",
+        "Aplicar extrator estruturado ou específico da fonte e fallback HTML quando cabível.",
+        "Converter os documentos em anúncios.",
+        "Preservar referência da evidência.",
+        "Deduplicar por fonte e ID externo, mantendo a observação mais recente no processamento."
+      ],
+      "saida": "Anúncios extraídos, duplicatas, páginas não reconhecidas e falhas.",
+      "codigo": [
+        "src/observatorio_vagas/extraction/processador.py"
+      ]
+    },
+    {
+      "ordem": 7,
+      "etapa": "filtro_publicacao",
+      "entrada": "Anúncios únicos com publicado_em.",
+      "processamento": [
+        "Com --publicados-ontem, fixar ontem no calendário America/Sao_Paulo no início do comando.",
+        "Converter horários com fuso para o dia de Brasília.",
+        "Selecionar apenas a data de publicação pedida.",
+        "Separar anúncios sem data e de outras datas."
+      ],
+      "saida": "Anúncios selecionados antes da gravação.",
+      "observacoes": [
+        "A data de coleta não substitui a data de publicação.",
+        "As páginas ainda precisam ser visitadas para descobrir as datas.",
+        "O filtro não apaga anúncios antigos do MongoDB."
+      ],
+      "codigo": [
+        "src/observatorio_vagas/extraction/data_publicacao.py",
+        "src/observatorio_vagas/extraction/processador.py"
+      ]
+    },
+    {
+      "ordem": 8,
+      "etapa": "persistencia_e_normalizacao",
+      "entrada": "Anúncios selecionados.",
+      "processamento": [
+        "Sem --confirmar, mostrar prévia.",
+        "Com --confirmar e configurações permitidas, salvar o lote no MongoDB.",
+        "Manter primeira observação ao atualizar registros.",
+        "Resolver a empresa e criar ou atualizar a vaga canônica nas etapas do lote.",
+        "Normalizar modalidade, contratação, senioridade, localização e salário quando há evidências."
+      ],
+      "saida": "Anúncios e entidades relacionadas persistidos, ou relatório da prévia.",
+      "codigo": [
+        "scripts/processar_e_salvar_anuncios.py",
+        "src/observatorio_vagas/storage/mongodb/anuncios.py",
+        "scripts/resolver_empresas_anuncios.py",
+        "scripts/criar_vagas_canonicas.py"
+      ]
+    },
+    {
+      "ordem": 9,
+      "etapa": "prontidao_e_elegibilidade",
+      "entrada": "Anúncio, empresa, vaga canônica e política da fonte.",
+      "processamento": [
+        "Avaliar os 24 campos configurados.",
+        "Separar campos obrigatórios de opcionais.",
+        "Verificar política de republicação, domínio e expiração.",
+        "Bloquear payload quando há erros obrigatórios ou impedimentos de elegibilidade."
+      ],
+      "saida": "Relatório com valores, origem dos campos, alertas e bloqueios.",
+      "observacao": "As obrigações listadas refletem o código local inspecionado, não uma nova validação externa do contrato da API.",
+      "codigo": [
+        "src/observatorio_vagas/domain/prontidao.py",
+        "src/observatorio_vagas/domain/elegibilidade.py",
+        "scripts/preparar_fila_empregos.py"
+      ]
+    },
+    {
+      "ordem": 10,
+      "etapa": "publicacao",
+      "entrada": "Vagas elegíveis e payload revisado.",
+      "processamento": [
+        "A publicação utiliza fluxo próprio de integração e autorização.",
+        "Coletar, extrair e salvar no MongoDB não significa enviar para o Empregos."
+      ],
+      "saida": "Envio e histórico somente quando o fluxo de publicação for efetivamente executado.",
+      "status_desta_demonstracao": "nenhum_envio"
+    }
+  ],
+  "exemplo_execucao": {
+    "natureza": "simulacao_didatica",
+    "alvo": {
+      "alvo_id": "empresa_demo",
+      "url": "https://empresa.example/carreiras",
+      "fonte": "outra",
+      "politica": "aprovada_apenas_no_exemplo",
+      "comprovacao": "Nenhuma licença real é demonstrada por este documento."
+    },
+    "inicio": "2026-09-15T09:00:00-03:00",
+    "filtro": {
+      "argumento": "--publicados-ontem",
+      "dia_selecionado": "2026-09-14",
+      "fuso": "America/Sao_Paulo"
+    },
+    "leituras": {
+      "listagens_recebidas": 2,
+      "detalhes_candidatos_unicos": 6,
+      "detalhes_agendados": 6,
+      "detalhes_http_ok": 5,
+      "detalhes_http_erro": 1,
+      "paginas_recebidas_total": 8,
+      "detalhes_sem_vaga_reconhecida": 1,
+      "anuncios_extraidos_antes_filtro": 4,
+      "selecionados_publicados_ontem": 3,
+      "excluidos_outras_datas": 1,
+      "excluidos_sem_data": 0
+    },
+    "reconciliacao": [
+      "8 páginas = 2 listagens + 6 detalhes.",
+      "6 detalhes = 5 HTTP OK + 1 erro.",
+      "5 detalhes HTTP OK = 4 anúncios extraídos + 1 página não reconhecida, neste exemplo.",
+      "4 anúncios extraídos = 3 publicados ontem + 1 de outra data.",
+      "Essa equivalência entre detalhe e anúncio é específica deste exemplo; uma página pode conter várias vagas."
+    ],
+    "anuncios": [
+      {
+        "id_externo": "102",
+        "titulo": "Analista de Dados",
+        "publicado_em": "2026-09-14",
+        "tratamento": "selecionado",
+        "comparacao": "ja_existia_com_descricao_alterada"
+      },
+      {
+        "id_externo": "103",
+        "titulo": "Pessoa Desenvolvedora Python",
+        "publicado_em": "2026-09-15T02:30:00Z",
+        "dia_brasilia": "2026-09-14",
+        "tratamento": "selecionado",
+        "comparacao": "novo_na_observacao"
+      },
+      {
+        "id_externo": "104",
+        "titulo": "Assistente Administrativo",
+        "publicado_em": "2026-09-14",
+        "tratamento": "selecionado",
+        "comparacao": "novo_na_observacao"
+      },
+      {
+        "id_externo": "105",
+        "titulo": "Analista de Suporte",
+        "publicado_em": "2026-09-12",
+        "tratamento": "excluido_pelo_filtro_de_publicacao"
+      }
+    ],
+    "falhas": [
+      {
+        "url": "https://empresa.example/vaga/106",
+        "status_http": 404,
+        "tratamento": "registrar_erro_sem_inventar_anuncio"
+      },
+      {
+        "url": "https://empresa.example/vaga/107",
+        "status_http": 200,
+        "tratamento": "pagina_recebida_sem_vaga_reconhecida; revisar conteúdo e adaptador"
+      }
+    ]
+  },
+  "comparacao_entre_coletas": {
+    "natureza": "exemplo_de_comparacao; não é um relatório real executado",
+    "chave": "fonte + id_externo; IDs apresentados abaixo pertencem à fonte outra",
+    "universo": "Comparar o mesmo conjunto de fontes e critérios. Não confundir alteração de filtro com desaparecimento de uma vaga.",
+    "ids_antes": [
+      "101",
+      "102"
+    ],
+    "ids_agora": [
+      "102",
+      "103",
+      "104"
+    ],
+    "novos": [
+      "103",
+      "104"
+    ],
+    "existentes": [
+      "102"
+    ],
+    "nao_observados_agora": [
+      "101"
+    ],
+    "totais": {
+      "antes": 2,
+      "agora": 3,
+      "novos": 2,
+      "existentes": 1,
+      "nao_observados_agora": 1
+    },
+    "alteracoes": [
+      {
+        "id_externo": "102",
+        "campo": "descricao_original",
+        "antes": "Atuação na análise de indicadores.",
+        "depois": "Atuação na análise de indicadores e construção de relatórios SQL."
+      }
+    ],
+    "regras": [
+      "Novo na observação não significa necessariamente publicado hoje.",
+      "Uma vaga não observada pode ter ficado fora do limite, mudado de página ou sofrido falha de download.",
+      "Ausência em uma coleta não é evidência suficiente para excluir ou encerrar a vaga.",
+      "Não usar somente o hash do HTML para comparar vagas: menus, anúncios e scripts podem mudar.",
+      "As contagens de atualizados do MongoDB podem incluir mudanças de metadados; não são automaticamente alterações de descrição."
+    ],
+    "estado_implementacao": "O código armazena identidades e observações e produz relatórios. Este comparativo antes/depois ilustra a lógica; o JSON não instala um comparador automático entre execuções."
+  },
+  "tratamento_dos_dados": {
+    "dados_ausentes": "Manter ausência; não inventar salário, CNPJ, descrição ou data.",
+    "descricao_vaga": "description: atividades e requisitos da oportunidade.",
+    "descricao_empresa": "company.description: apresentação institucional da empresa; não é a descrição da vaga.",
+    "procedencia": {
+      "extraido": "Obtido diretamente da fonte.",
+      "inferido": "Derivado pelas regras de normalização; exige evidência suficiente.",
+      "enriquecido": "Obtido de dados complementares da empresa ou anúncio.",
+      "gerado": "Produzido pelo sistema, como a operação CREATE.",
+      "ausente": "Não encontrado.",
+      "revisao_necessaria": "Exige verificação antes de uso."
+    },
+    "deduplicacao": {
+      "url": "Remove fragmentos e parâmetros de rastreamento conhecidos; preserva IDs, filtros e paginação.",
+      "corpo": "Corpos idênticos compartilham o mesmo SHA-256.",
+      "anuncio": "Fonte e ID externo identificam o anúncio.",
+      "limite": "Deduplicação entre fontes distintas exige correspondência adicional; não é garantida apenas pelo título."
+    },
+    "politica": "Acesso público não é, por si só, a comprovação de republicação. O crawler utiliza as políticas configuradas.",
+    "concursos": "Conteúdo identificado como concurso público é excluído pelo filtro do projeto.",
+    "javascript": "Leitura dinâmica pode recuperar cards adicionais; continua sujeita a limites, timeouts e dependências externas.",
+    "integridade": "Hash divergente ou falha de extração é sinalizado. O script de gravação bloqueia o lote do alvo quando existem falhas de extração.",
+    "publicacao": "Ter dados preenchidos não basta: a fonte e a vaga também precisam passar pela elegibilidade."
+  },
+  "campos_api_exemplo": {
+    "natureza": "Valores fictícios do anúncio 103. Demonstra a avaliação local; não é um payload pronto para envio.",
+    "campos": [
+      {
+        "campo": "company.applyUrl",
+        "obrigatorio_no_codigo": true,
+        "valor": "https://empresa.example/vaga/103/candidatura",
+        "situacao": "extraido"
+      },
+      {
+        "campo": "company.name",
+        "obrigatorio_no_codigo": true,
+        "valor": "Empresa Demonstração",
+        "situacao": "enriquecido"
+      },
+      {
+        "campo": "company.logoUrl",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "company.description",
+        "obrigatorio_no_codigo": false,
+        "valor": "Empresa fictícia dedicada ao desenvolvimento de sistemas e serviços de tecnologia.",
+        "situacao": "enriquecido"
+      },
+      {
+        "campo": "company.industries",
+        "obrigatorio_no_codigo": false,
+        "valor": "Tecnologia",
+        "situacao": "enriquecido"
+      },
+      {
+        "campo": "company.companyId",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "company.recruiterId",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "company.recruiterName",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "company.recruiterEmail",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "company.nationalRegister",
+        "obrigatorio_no_codigo": true,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "externalJobPostingId",
+        "obrigatorio_no_codigo": true,
+        "valor": "103",
+        "situacao": "extraido"
+      },
+      {
+        "campo": "jobPostingOperationType",
+        "obrigatorio_no_codigo": false,
+        "valor": "CREATE",
+        "situacao": "gerado"
+      },
+      {
+        "campo": "title",
+        "obrigatorio_no_codigo": true,
+        "valor": "Pessoa Desenvolvedora Python",
+        "situacao": "inferido"
+      },
+      {
+        "campo": "description",
+        "obrigatorio_no_codigo": true,
+        "valor": "Desenvolver e manter aplicações Python, implementar integrações, escrever testes automatizados e colaborar na documentação e revisão de código da equipe.",
+        "situacao": "extraido"
+      },
+      {
+        "campo": "location.address",
+        "obrigatorio_no_codigo": true,
+        "valor": "São Paulo, SP, Brasil",
+        "situacao": "inferido"
+      },
+      {
+        "campo": "location.postalCode",
+        "obrigatorio_no_codigo": false,
+        "valor": "01000-000",
+        "situacao": "extraido"
+      },
+      {
+        "campo": "location.geolocation",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "salary.min",
+        "obrigatorio_no_codigo": false,
+        "valor": 6000,
+        "situacao": "inferido"
+      },
+      {
+        "campo": "salary.max",
+        "obrigatorio_no_codigo": false,
+        "valor": 8000,
+        "situacao": "inferido"
+      },
+      {
+        "campo": "workplaceTypes",
+        "obrigatorio_no_codigo": false,
+        "valor": "Remote",
+        "situacao": "inferido"
+      },
+      {
+        "campo": "employmentStatus",
+        "obrigatorio_no_codigo": false,
+        "valor": "FULL_TIME",
+        "situacao": "inferido"
+      },
+      {
+        "campo": "experienceLevel",
+        "obrigatorio_no_codigo": false,
+        "valor": "MID_SENIOR_LEVEL",
+        "situacao": "inferido"
+      },
+      {
+        "campo": "trackingPixelUrl",
+        "obrigatorio_no_codigo": false,
+        "valor": null,
+        "situacao": "ausente"
+      },
+      {
+        "campo": "expireAt",
+        "obrigatorio_no_codigo": false,
+        "valor": "2026-09-30T23:59:59-03:00",
+        "situacao": "extraido"
+      }
+    ],
+    "resumo": {
+      "avaliados": 24,
+      "preenchidos": 16,
+      "percentual": 66.67,
+      "obrigatorios_no_codigo": 7,
+      "obrigatorios_preenchidos": 6
+    },
+    "bloqueios": [
+      {
+        "campo": "company.nationalRegister",
+        "motivo": "CNPJ não encontrado; não inventar um valor."
+      }
+    ],
+    "elegivel_para_envio": false,
+    "observacao": "Mesmo com CNPJ válido, seria necessário verificar os demais critérios de elegibilidade e o contrato vigente da integração."
+  },
+  "arquivos_resultantes": {
+    "teste_isolado": "outputs/testes_fontes/<execucao>/",
+    "conteudo_teste": {
+      "catalogo.csv": "Uma única fonte e seus limites.",
+      "raw": "Respostas preservadas apenas desse teste.",
+      "cobertura.json": "Candidatos, downloads, erros e diagnóstico JavaScript.",
+      "anuncios.json": "Dados extraídos do teste.",
+      "resumo.json": "Totais e presença de descrição/empresa, incluindo filtro de publicação."
+    },
+    "lote": "outputs/cobertura/coleta_<instante>.json: um relatório por processo de coleta; não assumir que o arquivo mais recente cobre todo o lote.",
+    "mongodb": "Persistência exige execução com confirmação e conexão disponível.",
+    "observacao": "Os esquemas resumidos deste documento são didáticos. O esquema real de cada relatório é definido pelo script que o gera."
+  },
+  "comandos": {
+    "testar_javascript": ".\\.venv\\Scripts\\python.exe scripts\\testar_renderizacao_javascript.py",
+    "listar_fontes": ".\\.venv\\Scripts\\python.exe scripts\\testar_fonte.py --listar",
+    "testar_fonte_cadastrada": ".\\.venv\\Scripts\\python.exe scripts\\testar_fonte.py --alvo-id dataprivacy_oportunidades --javascript --publicados-ontem --paginas 3 --anuncios 20",
+    "lote_previa": ".\\.venv\\Scripts\\python.exe scripts\\processar_lote.py --catalogo config\\catalogo_fontes.csv --coletar --somente-republicaveis --javascript --publicados-ontem --limite-anuncios 100 --limite 1000 --alvos-por-coleta 5",
+    "gravar_lote": "Acrescentar --confirmar ao comando de lote, com MongoDB disponível.",
+    "fixar_periodo": "Substituir --publicados-ontem por --publicados-em YYYY-MM-DD, usando uma data real.",
+    "verificar_elegibilidade": ".\\.venv\\Scripts\\python.exe scripts\\preparar_fila_empregos.py --catalogo config\\catalogo_fontes.csv --somente-catalogo --limite 1000 --saida-json outputs\\aptidao_atual.json"
+  }
+}

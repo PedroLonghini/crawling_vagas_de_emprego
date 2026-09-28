@@ -1,0 +1,17 @@
+# Novas URLs com permissao de reutilizacao verificada em 08/09/2026.
+# Cadastradas no catalogo central com ativa=false: conversores ainda pendentes.
+# Licenca por pagina: nao estender a permissao a todos os links do dominio.
+# Paginas oficiais de carreiras: aguardam verificacao de permissao de coleta.
+https://www.totvs.com/trabalhe-conosco/
+https://www.renault.com.br/carreiras.html
+https://www.bosch.com.br/carreiras/
+https://eletrobras.com/pt/Paginas/Trabalhe-Conosco.aspx
+https://carreiras.natura.com.br/
+https://carreiras.cosan.com/
+https://www.ajinomoto.com.br/trabalhe-conosco/
+https://dadosabertos.ufms.br/dataset/administracao-vagas-para-concurso-servidores-da-ufms
+https://imprensa24h.com.br/concurso-prefeitura-acarau-ce-vagas/
+https://imprensa24h.com.br/concurso-prefeitura-jarinu-edital/
+https://palotina24horas.com.br/agencia-do-trabalhador-inicia-a-semana-com-231-vagas-disponiveis/
+https://palotina24horas.com.br/concurso-da-prefeitura-de-itaipulandia-oferece-35-vagas-e-salarios-de-ate-r-15-mil/
+https://palotina24horas.com.br/c-vale-abre-inscricoes-para-jovem-aprendiz-administrativo/

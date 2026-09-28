@@ -1,0 +1,32 @@
+{
+  "company": {
+    "applyUrl": "https://carreiras.empresa-exemplo.com.br/vagas/desenvolvedor-python",
+    "name": "Empresa Exemplo Tecnologia Ltda.",
+    "logoUrl": "https://carreiras.empresa-exemplo.com.br/logo.png",
+    "description": "Empresa fictícia usada somente para demonstrar o formato final enviado à API do Empregos. Desenvolve produtos digitais para empresas brasileiras.",
+    "industries": "Tecnologia da informação",
+    "companyId": "EMPRESA-INTERNA-001",
+    "recruiterId": "RECRUTADOR-001",
+    "recruiterName": "Equipe de Recrutamento",
+    "recruiterEmail": "recrutamento@empresa-exemplo.com.br",
+    "nationalRegister": "12.345.678/0001-90"
+  },
+  "externalJobPostingId": "empresa-exemplo:desenvolvedor-python:2026-001",
+  "jobPostingOperationType": "CREATE",
+  "title": "Pessoa Desenvolvedora Python Pleno",
+  "description": "Buscamos uma pessoa desenvolvedora Python para criar e manter serviços de dados. A pessoa trabalhará em parceria com produto e engenharia, participará de revisões de código e ajudará a evoluir a plataforma. São desejados conhecimentos em Python, APIs HTTP, bancos de dados relacionais e práticas de testes automatizados.",
+  "location": {
+    "address": "Avenida Paulista, 1000, Bela Vista, São Paulo, SP",
+    "postalCode": "01310-100",
+    "geolocation": "-23.561414,-46.655881"
+  },
+  "salary": {
+    "min": 6500,
+    "max": 8500
+  },
+  "workplaceTypes": "Hybrid",
+  "employmentStatus": "FULL_TIME",
+  "experienceLevel": "MID_SENIOR_LEVEL",
+  "trackingPixelUrl": "https://tracking.empresa-exemplo.com.br/pixel/vaga-2026-001",
+  "expireAt": "2026-10-31T23:59:59+00:00"
+}

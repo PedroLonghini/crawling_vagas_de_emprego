@@ -1,0 +1,118 @@
+"""Testes da interface segura da fila do Empregos."""
+
+import json
+from datetime import UTC, date, datetime
+from pathlib import Path
+from uuid import UUID
+
+from scripts import preparar_fila_empregos
+
+from observatorio_vagas.integrations.empregos import (
+    ItemFilaEmpregos,
+    MotivoFilaEmpregos,
+    SituacaoItemFilaEmpregos,
+)
+from observatorio_vagas.integrations.empregos.preparacao import (
+    ResultadoPreparacaoEmpregos,
+)
+
+
+def test_parser_usa_catalogo_central_e_limite_seguro() -> None:
+    """O comando deve funcionar sem repetir caminhos operacionais."""
+
+    opcoes = preparar_fila_empregos.criar_parser().parse_args([])
+
+    assert opcoes.catalogo == Path("config/catalogo_fontes.csv")
+    assert opcoes.limite == 100
+    assert not opcoes.somente_catalogo
+
+
+def test_parser_aceita_escopo_do_catalogo() -> None:
+    """A rotina diária pode excluir anúncios de outros catálogos."""
+
+    opcoes = preparar_fila_empregos.criar_parser().parse_args(["--somente-catalogo"])
+
+    assert opcoes.somente_catalogo
+
+
+def test_parser_aceita_filtro_por_data_de_publicacao() -> None:
+    """A fila deve permitir isolar as vagas publicadas em um dia."""
+
+    opcoes = preparar_fila_empregos.criar_parser().parse_args(["--publicados-em", "2026-09-17"])
+
+    assert opcoes.publicados_em == date(2026, 9, 17)
+    assert not opcoes.publicados_ontem
+
+
+def test_limite_invalido_para_antes_de_consultar_mongodb(capsys: object) -> None:
+    """Uma entrada insegura deve falhar antes da criação de repositórios."""
+
+    codigo = preparar_fila_empregos.executar(["--limite", "0"])
+
+    assert codigo == 2
+    assert "limite deve estar entre 1 e 10000" in capsys.readouterr().out
+
+
+def test_item_json_preserva_ids_bloqueios_e_percentual() -> None:
+    """O relatório exportado precisa continuar auditável."""
+
+    item = ItemFilaEmpregos(
+        anuncio_id=UUID("10000000-0000-4000-8000-000000000001"),
+        vaga_id=UUID("20000000-0000-4000-8000-000000000002"),
+        empresa_id=UUID("30000000-0000-4000-8000-000000000003"),
+        alvo_id="empresa_teste",
+        titulo="Pessoa Desenvolvedora",
+        situacao=SituacaoItemFilaEmpregos.BLOQUEADA,
+        campos_preenchidos=12,
+        total_campos=24,
+        bloqueios=(
+            MotivoFilaEmpregos(
+                codigo="fonte_sem_permissao",
+                mensagem="A fonte não permite republicação.",
+            ),
+        ),
+    )
+
+    documento = preparar_fila_empregos._item_para_json(item)
+
+    assert documento["situacao"] == "bloqueada"
+    assert documento["percentual_preenchimento"] == 50.0
+    assert documento["bloqueios"][0]["codigo"] == "fonte_sem_permissao"
+
+
+def test_exporta_payload_e_manifesto_sem_operacao_externa(tmp_path: Path) -> None:
+    """A saída local precisa conter a identidade e o corpo já aprovado."""
+
+    item = ItemFilaEmpregos(
+        anuncio_id=UUID("10000000-0000-4000-8000-000000000001"),
+        vaga_id=UUID("20000000-0000-4000-8000-000000000002"),
+        empresa_id=UUID("30000000-0000-4000-8000-000000000003"),
+        alvo_id="fonte_aberta",
+        titulo="Pessoa Desenvolvedora",
+        situacao=SituacaoItemFilaEmpregos.ELEGIVEL,
+        chave_idempotencia="a" * 64,
+        preparacao=ResultadoPreparacaoEmpregos(
+            relatorio=None,  # type: ignore[arg-type]
+            elegibilidade=None,  # type: ignore[arg-type]
+            payload={"title": "Pessoa Desenvolvedora"},
+        ),
+    )
+
+    diretorio = preparar_fila_empregos._exportar_payloads_locais(
+        preparar_fila_empregos.ResultadoFilaEmpregos(itens=(item,)),
+        diretorio_base=tmp_path,
+        gerado_em=datetime(2026, 9, 4, 12, 30, tzinfo=UTC),
+    )
+
+    manifesto = (diretorio / "manifesto.json").read_text(encoding="utf-8")
+    payload = (diretorio / "payloads" / f"{'a' * 24}.json").read_text(encoding="utf-8")
+    payloads_unificados = json.loads(
+        (diretorio / "payloads_unificados.json").read_text(encoding="utf-8")
+    )
+
+    assert "PREPARACAO_LOCAL_SEM_API" in manifesto
+    assert '"payloads_exportados": 1' in manifesto
+    assert '"title": "Pessoa Desenvolvedora"' in payload
+    assert '"proveniencia_fonte": null' in payload
+    assert '"arquivo_payloads_unificados": "payloads_unificados.json"' in manifesto
+    assert payloads_unificados == [{"title": "Pessoa Desenvolvedora"}]

@@ -1,177 +1,187 @@
-# Observatório de Vagas
+# Crawling de vagas de emprego
 
-Pipeline para coletar vagas públicas de fontes autorizadas, preservar a
-resposta original, extrair e normalizar informações, armazenar os resultados
-no MongoDB e preparar vagas elegíveis para a API do Empregos.
+Sistema para descobrir vagas em páginas de carreira, preservar a evidência da
+coleta, extrair dados estruturados, gravar anúncios no MongoDB e preparar
+payloads para o Empregos.
 
-O Empregos é somente o destino. O crawler não coleta vagas do site Empregos.
+O projeto não coleta vagas no Empregos. O Empregos é somente o destino final
+de publicação, acionado separadamente e com confirmação explícita.
 
-## Fluxo principal
-
-```text
-catálogo de fontes
-        ↓
-Scrapy + política + robots.txt
-        ↓
-respostas brutas em data/raw
-        ↓
-extração de JSON-LD/HTML/PDF
-        ↓
-anúncio → empresa → vaga canônica
-        ↓
-MongoDB
-        ↓
-24 campos + elegibilidade + payload
-        ↓
-API do Empregos (somente com confirmação explícita)
-```
-
-Uma falha em um alvo é isolada: o processamento em lote registra o problema e
-continua nos demais sites. Coletar uma página não significa que sua vaga pode
-ser republicada. A decisão final também considera a política da fonte, a
-expiração e os campos realmente obrigatórios da API.
-
-## Estrutura
+## Como funciona
 
 ```text
-config/catalogo_fontes.csv       biblioteca canônica de URLs e políticas
-dashboard/                       telas simples de inspeção
-data/                            catálogos auxiliares e dados locais
-docs/                            documentação funcional
-scripts/                         comandos operacionais e diagnósticos
-src/observatorio_vagas/
-  crawling/                      coleta, descoberta e armazenamento bruto
-  domain/                        modelos e regras de negócio
-  extraction/                    extração, enriquecimento e normalização
-  integrations/empregos/         payload, cliente e publicação idempotente
-  storage/                       contratos de persistência
-  storage/mongodb/               implementações e índices do MongoDB
-tests/                            testes automatizados
+Página de carreiras
+        ↓
+Crawler: descobre listagens e vagas
+        ↓
+data/raw: preserva a resposta original
+        ↓
+Extrator: título, empresa, descrição, local e candidatura
+        ↓
+MongoDB: anúncio → empresa → vaga canônica
+        ↓
+Fila: valida os dados necessários
+        ↓
+Payload JSON: revisão e futura publicação no Empregos
 ```
 
-## Requisitos e instalação
+O crawler foi pensado para rodar diariamente. Ele guarda histórico, isola
+falhas por fonte, identifica conteúdo incompatível e prioriza novidades quando
+há informações suficientes para isso.
 
-- Python 3.11 ou superior
-- MongoDB acessível pela URI configurada
+## Regras importantes
 
-No Windows PowerShell:
+- O crawler respeita `robots.txt`, timeouts, limites por domínio e bloqueios
+  técnicos. Ele não tenta contornar CAPTCHA, WAF ou proibições explícitas.
+- Coletar uma vaga não significa que ela pode ser republicada. A publicação
+  depende da política e da autorização registrada para a fonte.
+- URLs de Gupy, Indeed, Catho e InfoJobs/Pandapé são recusadas.
+- Nenhum comando publica no Empregos por acidente. A publicação exige uma
+  confirmação própria e configuração válida no `.env`.
+
+## Instalação
+
+Requisitos: Windows, PowerShell, Python 3.11 ou superior e MongoDB acessível.
 
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install --upgrade pip
 python -m pip install -e ".[dev,crawler,mongodb,demo]"
+Copy-Item .env.example .env
 ```
 
-Copie `.env.example` para `.env` e ajuste os valores do ambiente. O MongoDB
-atual pode estar na VM; futuramente basta trocar `OBS_MONGODB_URI` e
-`OBS_MONGODB_DATABASE` para usar o servidor definitivo.
+Edite o `.env` com a URI e o banco MongoDB. Nunca envie esse arquivo ao
+GitHub: ele contém configurações privadas e já está no `.gitignore`.
 
-Nunca envie `.env`, chaves, tokens ou credenciais para o repositório.
+## Adicionar uma fonte
 
-## Catálogo e política das fontes
+Edite [`config/catalogo_fontes.csv`](config/catalogo_fontes.csv). Ele possui
+uma única coluna chamada `url`:
 
-As fontes ficam em [`config/catalogo_fontes.csv`](config/catalogo_fontes.csv).
-Esse é o único CSV operacional: ele tem apenas a coluna `url`. Adicione uma URL
-de página de carreiras por linha e rode normalmente o crawler. O sistema cria
-o identificador, o nome provisório e a configuração de coleta automaticamente.
-
-URLs de Gupy, Indeed, Catho e InfoJobs/Pandapé são recusadas. Uma URL válida é
-coletável, mas a publicação continua bloqueada até a autorização da empresa ser
-registrada. O guia rápido está em [`config/README.md`](config/README.md).
-
-Cada alvo possui uma política independente. Estados como `somente_coleta`
-permitem testes e preservação da página, mas impedem a republicação. Uma
-fonte bloqueada ou não cadastrada não deve ser contornada.
-
-## Operação segura
-
-Os comandos de transformação usam modo de prévia por padrão. Revise a saída
-antes de acrescentar `--confirmar`.
-
-Coletar e processar todo o catálogo:
-
-```powershell
-.\.venv\Scripts\python.exe scripts\processar_lote.py --coletar
-.\.venv\Scripts\python.exe scripts\processar_lote.py --coletar --confirmar
+```csv
+url
+https://empresa.com.br/trabalhe-conosco/
+https://jobs.lever.co/empresa
 ```
 
-Reprocessar respostas já armazenadas:
+Adicione uma página de carreiras por linha. O sistema cria automaticamente o
+identificador, nome provisório, tipo de fonte e limite inicial seguro. Uma nova
+fonte pode ser coletada, mas só entra nos payloads após sua aprovação.
+
+Mais detalhes: [config/README.md](config/README.md).
+
+## Rotina diária
+
+### 1. Coletar e gravar no MongoDB
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\processar_lote.py `
-  --coletado-desde 2026-08-26T14:00:00+00:00
+    --coletar `
+    --confirmar `
+    --somente-republicaveis `
+    --limite-anuncios 500 `
+    --trabalhadores-posprocessamento 16
 ```
 
-Resolver empresas e criar vagas canônicas de um alvo:
+| Opção | Significado |
+| --- | --- |
+| `--coletar` | Busca páginas novas na internet. |
+| `--confirmar` | Autoriza gravação no MongoDB; não publica no Empregos. |
+| `--somente-republicaveis` | Considera apenas fontes aprovadas para publicação. |
+| `--limite-anuncios 500` | Limite de detalhes por fonte; evita leituras longas demais. |
+| `--trabalhadores-posprocessamento 16` | Usa mais capacidade do computador ao criar vagas canônicas. |
 
-```powershell
-.\.venv\Scripts\python.exe scripts\resolver_empresas_anuncios.py `
-  --alvo-id ID_DO_ALVO
-.\.venv\Scripts\python.exe scripts\criar_vagas_canonicas.py `
-  --alvo-id ID_DO_ALVO
-```
+Para muitas fontes, também é possível dividir o catálogo por domínio e rodar
+três crawlers em paralelo. Os três apenas salvam em `data/raw`; depois, execute
+uma única vez `processar_lote.py --coletado-desde ... --confirmar` para gravar
+o lote completo no MongoDB.
 
-Listar e diagnosticar os 24 campos da API:
+### 2. Gerar payloads para revisão
 
-```powershell
-.\.venv\Scripts\python.exe scripts\diagnosticar_vaga_empregos.py --listar
-.\.venv\Scripts\python.exe scripts\diagnosticar_vaga_empregos.py `
-  --anuncio-id UUID_DO_ANUNCIO --vaga-id UUID_DA_VAGA
-```
-
-Preparar uma fila consolidada, sem gravar nem publicar:
+Este comando não publica nada. Ele cria JSONs locais para conferência:
 
 ```powershell
 .\.venv\Scripts\python.exe scripts\preparar_fila_empregos.py `
-  --limite 100 --saida-json outputs\fila_empregos.json `
-  --diretorio-payloads outputs\preparacao_empregos
+    --catalogo config\catalogo_fontes.csv `
+    --somente-catalogo `
+    --limite 10000 `
+    --saida-json outputs\relatorios\fila_atual.json `
+    --diretorio-payloads outputs\payloads\para_publicar
 ```
 
-Para exportar somente as vagas publicadas ontem no horário de Brasília, acrescente
-`--publicados-ontem`. Para uma data específica, use `--publicados-em YYYY-MM-DD`.
+O arquivo principal é:
 
-A fila separa vagas elegíveis, bloqueadas e operações já registradas no
-histórico. Ela fornece os UUIDs necessários para revisar uma vaga no comando
-individual de diagnóstico ou publicação. Quando `--diretorio-payloads` é
-informado, ela cria uma pasta de lote com `manifesto.json`, um JSON por vaga
-elegível e `payloads_unificados.json`, uma lista com todos os corpos de payload
-do lote. Essa preparação é local: não chama a API e não grava nada no MongoDB.
+```text
+outputs/payloads/para_publicar/lote-.../payloads_unificados.json
+```
 
-Publicar uma vaga exige `--confirmar-publicacao`, fonte aprovada, vaga
-elegível, configuração oficial da API e o kill switch habilitado. Sem essa
-opção, o comando apenas simula:
+Ele contém todos os payloads do lote. O `manifesto.json` explica o conteúdo e
+a pasta `payloads/` permite revisar uma vaga individualmente.
+
+### 3. Publicar no Empregos
+
+Publicação é a última etapa. Primeiro valide somente a configuração:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\publicar_vaga_empregos.py `
-  --anuncio-id UUID_DO_ANUNCIO --vaga-id UUID_DA_VAGA
+.\.venv\Scripts\python.exe scripts\verificar_configuracao_publicacao_empregos.py
 ```
 
-O histórico de publicação usa uma chave idempotente para impedir o reenvio
-acidental da mesma operação.
+Depois siga [docs/publicacao_teste_api.md](docs/publicacao_teste_api.md).
+Comece com uma única vaga de teste e mantenha o modo de simulação até conferir
+o resultado.
 
-Simular um lote controlado de até dez vagas elegíveis:
+## Onde ficam os resultados
+
+| Pasta | Conteúdo |
+| --- | --- |
+| `data/raw/` | Páginas e respostas originais coletadas. |
+| `outputs/relatorios/` | Filas, ranking e resumos por fonte. |
+| `outputs/payloads/para_publicar/` | Próximos lotes JSON para revisão. |
+| `outputs/cobertura/` | Métricas de coleta: páginas lidas, falhas e duração. |
+| `outputs/logs/` | Logs para investigar falhas. |
+| `outputs/testes_fontes/` | Testes individuais e evidências de fontes. |
+| `outputs/historico/` | Lotes e relatórios antigos preservados. |
+
+No projeto local, `outputs/LEIA_PRIMEIRO.md` também resume essa organização.
+
+## Estrutura do código
+
+```text
+config/                       URLs das fontes
+dashboard/                    Painéis de inspeção em Streamlit
+docs/                         Guias técnicos e procedimentos
+scripts/                      Comandos de operação e diagnóstico
+src/observatorio_vagas/
+  crawling/                   Spider, adaptadores, limites e armazenamento bruto
+  extraction/                 Leitura de HTML/JSON e normalização
+  domain/                     Regras de negócio e modelos
+  storage/mongodb/            Persistência no MongoDB
+  integrations/empregos/      Fila, payload e publicação idempotente
+tests/                        Testes automatizados
+```
+
+## Diagnóstico rápido
+
+Quantidade de anúncios por fonte:
 
 ```powershell
-.\.venv\Scripts\python.exe scripts\publicar_lote_empregos.py `
-  --limite 100 --maximo-envios 10 `
-  --saida-json outputs\publicacao_lote_empregos.json
+Get-Content outputs\relatorios\anuncios_por_fonte.csv
 ```
 
-Para realizar os POSTs do mesmo lote, revise a simulação e acrescente
-`--confirmar-publicacao`. O modo real também exige ambiente de produção,
-endpoint, autenticação e kill switch configurados no `.env`. Uma falha fica
-registrada no item correspondente e não interrompe as vagas seguintes. Itens
-bloqueados, excedentes ou com histórico nunca são enviados automaticamente.
+Ranking atualizado das fontes:
 
-O roteiro direto para configurar a API e enviar exatamente uma vaga de teste
-está em [`docs/publicacao_teste_api.md`](docs/publicacao_teste_api.md). Antes
-do POST, execute `scripts/verificar_configuracao_publicacao_empregos.py`: ele
-verifica somente a configuração, sem acessar MongoDB ou a API.
+```powershell
+.\.venv\Scripts\python.exe scripts\gerar_ranking_fontes.py
+```
 
-## Dashboard
+Teste de uma fonte isolada:
 
-As telas são ferramentas de inspeção, não o produto final:
+```powershell
+.\.venv\Scripts\python.exe scripts\testar_fonte.py --url "https://empresa.com.br/trabalhe-conosco/"
+```
+
+Painéis locais:
 
 ```powershell
 .\.venv\Scripts\streamlit.exe run dashboard\coletas.py
@@ -186,11 +196,10 @@ As telas são ferramentas de inspeção, não o produto final:
 .\.venv\Scripts\python.exe -m pytest
 ```
 
-Os testes unitários usam objetos falsos para validar os repositórios; a suíte
-não deve publicar vagas nem alterar o MongoDB real.
+Os testes não publicam vagas nem devem alterar o MongoDB real.
 
-## Responsabilidade operacional
+## GitHub
 
-O projeto deve respeitar autorizações, `robots.txt`, limites de requisição,
-termos aplicáveis, privacidade e retenção. A permissão de coleta e a permissão
-de republicação são decisões diferentes e ficam registradas no catálogo.
+O repositório guarda código, documentação, testes e o catálogo de URLs. Ele
+não guarda `.env`, dados brutos, payloads, logs, resultados de coleta ou caches
+locais.

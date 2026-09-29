@@ -471,7 +471,7 @@ def extrair_job_posting_html_generico(
         titulo = titulo or _primeiro_texto(seletor, ("//h2[1]//text()", "//h3[1]//text()"))
         descricao_seletores = (
             "string(//*[contains(@class, 'job-description')][1])",
-            "string(//*[self::h2 or self::h3][contains(translate(normalize-space(.), 'SOBREVAGA', 'sobrevaga'), 'sobre a vaga')]/following::*[self::div or self::section][1])",
+            "string(//*[self::h2 or self::h3][contains(translate(normalize-space(.), 'SOBREVAGA', 'sobrevaga'), 'sobre a vaga')]/following::*[self::div or self::section][1])",  # noqa: E501
         ) + descricao_seletores
     descricao = _primeiro_texto_com_tamanho_minimo(
         seletor,
@@ -500,7 +500,7 @@ def extrair_job_posting_html_generico(
     )
     if urlsplit(url).hostname == "vagas.codam.com.br":
         localidade_seletores = (
-            "//use[contains(@href, 'location-pin')]/ancestor::div[contains(@class, 'module-icon-item')][1]/span/text()",
+            "//use[contains(@href, 'location-pin')]/ancestor::div[contains(@class, 'module-icon-item')][1]/span/text()",  # noqa: E501
         ) + localidade_seletores
     localidade = _primeiro_texto(
         seletor,

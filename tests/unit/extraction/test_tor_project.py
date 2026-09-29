@@ -2,7 +2,6 @@
 
 from observatorio_vagas.extraction.tor_project import extrair_job_posting_tor_project
 
-
 HTML_VAGA = b"""
 <main role="main">
   <h2 class="mx-auto display-3 text-white">UX Lead</h2>

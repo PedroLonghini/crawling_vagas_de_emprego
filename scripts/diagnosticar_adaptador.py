@@ -60,7 +60,7 @@ def diagnosticar(url: str) -> dict[str, object]:
         "'candidatar-seapply'), 'apply')]"
     )
     cards = [
-        botao.xpath("ancestor::*[self::article or self::li or self::section or self::div][.//h2 or .//h3 or .//h4][1]")
+        botao.xpath("ancestor::*[self::article or self::li or self::section or self::div][.//h2 or .//h3 or .//h4][1]")  # noqa: E501
         for botao in botoes
     ]
     sinais_js = (
@@ -98,7 +98,7 @@ def diagnosticar(url: str) -> dict[str, object]:
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Diagnostica a estratégia de adaptador de uma URL.")
+    parser = argparse.ArgumentParser(description="Diagnostica a estratégia de adaptador de uma URL.")  # noqa: E501
     parser.add_argument("url", help="URL pública da página de carreiras")
     args = parser.parse_args()
     try:

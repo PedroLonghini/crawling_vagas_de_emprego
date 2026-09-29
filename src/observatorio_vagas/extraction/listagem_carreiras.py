@@ -24,7 +24,7 @@ def _texto(valor: str | None) -> str:
     return " ".join((valor or "").split())
 
 
-def _documento(*, titulo: str, descricao: str, url: str, aplicacao: str, extrator: str) -> dict[str, Any]:
+def _documento(*, titulo: str, descricao: str, url: str, aplicacao: str, extrator: str) -> dict[str, Any]:  # noqa: E501
     return {
         "@type": "JobPosting",
         "identifier": sha256(f"{url}|{titulo}|{aplicacao}".encode()).hexdigest()[:40],
@@ -36,13 +36,13 @@ def _documento(*, titulo: str, descricao: str, url: str, aplicacao: str, extrato
     }
 
 
-def extrair_vagas_listagem_carreiras(corpo: bytes, *, url: str, codificacao: str = "utf-8") -> ResultadoListagemCarreiras:
+def extrair_vagas_listagem_carreiras(corpo: bytes, *, url: str, codificacao: str = "utf-8") -> ResultadoListagemCarreiras:  # noqa: E501
     """Extrai somente opções e cards com sinais explícitos de recrutamento."""
 
     seletor = Selector(text=corpo.decode(codificacao, errors="replace"))
     vagas: dict[str, dict[str, Any]] = {}
     for campo in seletor.css("select"):
-        identificador = " ".join((campo.attrib.get("id", ""), campo.attrib.get("name", ""))).casefold()
+        identificador = " ".join((campo.attrib.get("id", ""), campo.attrib.get("name", ""))).casefold()  # noqa: E501
         if not any(palavra in identificador for palavra in ("vaga", "job", "cargo", "position")):
             continue
         aplicacao = f"{url}#{campo.attrib.get('id', 'formulario-vaga')}"
@@ -60,7 +60,7 @@ def extrair_vagas_listagem_carreiras(corpo: bytes, *, url: str, codificacao: str
             vagas.setdefault(documento["identifier"], documento)
     for card in seletor.css("[data-job-id], [data-vaga-id], .job, .vaga, .vacancy, .opening"):
         texto = _texto(card.xpath("string(.)").get())
-        titulo = _texto(card.css("h1, h2, h3, h4, [data-job-title], [data-vaga-title]").xpath("string(.)").get())
+        titulo = _texto(card.css("h1, h2, h3, h4, [data-job-title], [data-vaga-title]").xpath("string(.)").get())  # noqa: E501
         if len(titulo) < 3 or len(texto) < len(titulo) or not _SINAL_CANDIDATURA.search(texto):
             continue
         link = card.css("a[href]")
@@ -68,7 +68,7 @@ def extrair_vagas_listagem_carreiras(corpo: bytes, *, url: str, codificacao: str
             (
                 urljoin(url, item.attrib["href"])
                 for item in link
-                if _SINAL_CANDIDATURA.search(_texto(item.xpath("string(.)").get()) + " " + item.attrib.get("href", ""))
+                if _SINAL_CANDIDATURA.search(_texto(item.xpath("string(.)").get()) + " " + item.attrib.get("href", ""))  # noqa: E501
             ),
             url,
         )

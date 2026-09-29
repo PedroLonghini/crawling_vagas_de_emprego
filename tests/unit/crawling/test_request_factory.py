@@ -50,7 +50,7 @@ def criar_alvo(
             dominio=dominio,
             status=status,
             licenca_nome=(
-                "Licença aberta de teste" if status is StatusPoliticaFonte.APROVADA else ""
+                "CC BY 4.0" if status is StatusPoliticaFonte.APROVADA else ""
             ),
             licenca_url=(
                 "https://licencas.example/licenca-aberta"

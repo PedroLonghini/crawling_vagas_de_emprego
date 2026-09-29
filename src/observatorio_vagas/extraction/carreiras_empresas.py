@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-import re
 import json
+import re
 from dataclasses import dataclass
 from hashlib import sha256
 from typing import Any
@@ -236,7 +236,7 @@ def _extrair_viatec(corpo: bytes, url: str, codificacao: str) -> tuple[dict[str,
     vistos: set[str] = set()
     for botao in seletor.css("a[href*='/trabalheconosco/user/acesso/']"):
         candidatura = urljoin(url, botao.attrib.get("href", ""))
-        if not re.fullmatch(r"https?://(?:www\.)?viatectelecom\.com\.br/trabalheconosco/user/acesso/\d+/?", candidatura):
+        if not re.fullmatch(r"https?://(?:www\.)?viatectelecom\.com\.br/trabalheconosco/user/acesso/\d+/?", candidatura):  # noqa: E501
             continue
         if candidatura in vistos:
             continue
@@ -353,7 +353,7 @@ def _extrair_perigo_zero(corpo: bytes, url: str, codificacao: str) -> tuple[dict
         href = botao.attrib.get("href", "")
         if "candidat" not in texto_botao or not href.startswith("mailto:"):
             continue
-        card = botao.xpath("ancestor::*[self::article or self::section or self::div][.//h2 or .//h3][1]")
+        card = botao.xpath("ancestor::*[self::article or self::section or self::div][.//h2 or .//h3][1]")  # noqa: E501
         titulo = _texto(card.css("h2, h3").xpath("string(.)").get())
         conteudo = _texto(card.xpath("string(.)").get())
         chave = f"{titulo}|{href}"
@@ -408,7 +408,7 @@ def _extrair_marquezim(corpo: bytes, url: str, codificacao: str) -> tuple[dict[s
     formulario = seletor.css("form#custom-form")
     if not formulario:
         return ()
-    descricoes = [_texto(paragrafo.xpath("string(.)").get()) for paragrafo in seletor.css("#content p")]
+    descricoes = [_texto(paragrafo.xpath("string(.)").get()) for paragrafo in seletor.css("#content p")]  # noqa: E501
     candidatura = f"{url.split('#', 1)[0]}#custom-form"
     vagas: list[dict[str, Any]] = []
     vistos: set[str] = set()
@@ -487,7 +487,7 @@ def _extrair_cards_de_pagina(
             "_observatorio_extrator": extrator,
         }
         local = re.search(
-            r"([A-Za-z .]+)/(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b",
+            r"([A-Za-z .]+)/(AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO)\b",  # noqa: E501
             conteudo,
         )
         if local:

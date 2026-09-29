@@ -22,6 +22,14 @@ from observatorio_vagas.crawling.contracts import RespostaBruta
 from observatorio_vagas.crawling.estado_incremental import EstadoIncrementalLocal
 from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregaticio
 from observatorio_vagas.crawling.paginacao import descobrir_paginacao, eh_link_listagem
+from observatorio_vagas.crawling.plataformas import (
+    SITEMAP_NENHUM,
+    SITEMAP_POR_LOCATARIO,
+    filtrar_urls_do_locatario,
+    hosts_companheiros_de,
+    locatario_do_alvo,
+    politica_sitemap,
+)
 from observatorio_vagas.crawling.request_factory import (
     criar_requisicao_inicial,
     criar_requisicoes_detalhe,
@@ -36,10 +44,31 @@ from observatorio_vagas.crawling.urls import normalizar_url_vaga
 from observatorio_vagas.domain.enums import Fonte
 from observatorio_vagas.extraction.tor_project import eh_url_tor_project_vaga
 
-# O adaptador Abler descobre os detalhes no quadro público. Consultar
-# ``/sitemap.xml`` para cada consultoria acrescenta uma requisição por fonte,
-# mas não revela vagas adicionais nesse portal compartilhado.
-DOMINIOS_COM_ADAPTADOR_SEM_SITEMAP = frozenset({"ats.abler.com.br"})
+# Evidências dos adaptadores que indicam uma página de LISTAGEM ou PAGINAÇÃO:
+# ela continua sendo navegada (tipo ``inicial``) em vez de virar detalhe de vaga,
+# que nunca descobre outras páginas. Um adaptador novo que agende uma listagem
+# precisa registrar sua evidência aqui; o teste de contrato em
+# tests/unit/crawling/test_plataformas.py acusa a omissão.
+EVIDENCIAS_NAVEGACAO = frozenset(
+    {
+        "paginacao_json",
+        "paginacao_querido_diario",
+        "listagem_recurso_ckan",
+        "listagem_solides_api",
+        "paginacao_solides_api",
+        "listagem_senior_api",
+        "listagem_abler_api",
+        "paginacao_abler_api",
+        "paginacao_randstad",
+        "listagem_smartrecruiters_api",
+        "paginacao_smartrecruiters_api",
+        "listagem_workday_cxs",
+        "paginacao_workday_cxs",
+        "portal_csod_bradesco",
+        "portal_empregare_sicoob",
+        "paginacao_empregare_sicoob",
+    }
+)
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator, Iterator
@@ -186,19 +215,49 @@ class CatalogoFontesSpider(Spider):
             # Permite ao Scrapy consultar também o robots.txt do armazenamento.
             # A barreira continua exigindo o redirect do recurso SETADES exato.
             self.allowed_domains.append("one.s3.es.gov.br")
-        if any(dominio.endswith(".vagas.solides.com.br") for dominio in self.allowed_domains):
-            # A listagem pública é servida pela API oficial da Sólides, mas
-            # os detalhes e a candidatura continuam no subdomínio da empresa.
-            self.allowed_domains.append("apigw.solides.com.br")
-        if "ats.abler.com.br" in self.allowed_domains:
-            # A listagem pública da Abler é servida por este domínio; os
-            # links de candidatura continuam na página de carreira original.
-            self.allowed_domains.append("hulk-smash.abler.com.br")
-        if "jobs.smartrecruiters.com" in self.allowed_domains:
-            # A página de carreira usa a listagem pública documentada da
-            # plataforma; os detalhes continuam no portal da empresa.
-            self.allowed_domains.append("api.smartrecruiters.com")
-            self.allowed_domains.append("careers.smartrecruiters.com")
+        # APIs e portais externos que as páginas de carreira consultam vêm do
+        # registro de plataformas (Sólides, Abler, SmartRecruiters, CSOD...).
+        self.allowed_domains.extend(
+            host
+            for host in hosts_companheiros_de(frozenset(self.allowed_domains))
+            if host not in self.allowed_domains
+        )
+
+    def _url_inicial_do_alvo(self, alvo_id: str) -> str:
+        return next((a.url_inicial for a in self.alvos if a.alvo_id == alvo_id), "")
+
+    def _deve_pedir_sitemap_padrao(self, alvo_id: str, response: Response) -> bool:
+        """Aplica a política de sitemap da plataforma do host (plataformas.toml)."""
+
+        host = (urlsplit(response.url).hostname or "").casefold()
+        politica = politica_sitemap(host)
+        if politica == SITEMAP_NENHUM:
+            return False
+        if politica == SITEMAP_POR_LOCATARIO:
+            # Em host compartilhado sem empresa identificável não há como
+            # separar as vagas: melhor não baixar o sitemap da plataforma.
+            return locatario_do_alvo(self._url_inicial_do_alvo(alvo_id)) is not None
+        return True
+
+    def _sitemap_do_proprio_locatario(self, alvo_id: str, response: Response) -> tuple[str, ...]:
+        """Em plataformas multi-empresa, segue só as entradas da empresa do alvo."""
+
+        urls = descobrir_urls_sitemap(response)
+        host = (urlsplit(response.url).hostname or "").casefold()
+        if politica_sitemap(host) != SITEMAP_POR_LOCATARIO:
+            return urls
+        locatario = locatario_do_alvo(self._url_inicial_do_alvo(alvo_id))
+        if locatario is None:
+            return ()
+        mantidas = filtrar_urls_do_locatario(urls, host=host, locatario=locatario)
+        self.logger.info(
+            "Sitemap de plataforma compartilhada: alvo_id=%s locatario=%s mantidas=%s de %s",
+            alvo_id,
+            locatario,
+            len(mantidas),
+            len(urls),
+        )
+        return tuple(mantidas)
 
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
@@ -429,7 +488,7 @@ class CatalogoFontesSpider(Spider):
         if eh_resposta_sitemap(response):
             candidatos = ()
             paginacao: dict[str, None] = {}
-            urls_sitemap.update(descobrir_urls_sitemap(response))
+            urls_sitemap.update(self._sitemap_do_proprio_locatario(alvo_id, response))
         else:
             # Analisa somente o HTML que já foi baixado.
             # Esta função não faz nenhuma nova requisição.
@@ -460,27 +519,13 @@ class CatalogoFontesSpider(Spider):
             paginacao.update(
                 (candidato.url, None)
                 for candidato in candidatos
-                if set(candidato.evidencias)
-                & {
-                    "paginacao_json",
-                    "paginacao_querido_diario",
-                    "listagem_recurso_ckan",
-                    "listagem_solides_api",
-                    "paginacao_solides_api",
-                    "listagem_senior_api",
-                    "listagem_abler_api",
-                    "paginacao_abler_api",
-                    "paginacao_randstad",
-                    "listagem_smartrecruiters_api",
-                    "paginacao_smartrecruiters_api",
-                }
+                if set(candidato.evidencias) & EVIDENCIAS_NAVEGACAO
             )
             if (
                 Fonte(fonte) is Fonte.PAGINA_CARREIRAS
                 and response.meta.get("observatorio_numero_pagina") == 1
                 and alvo_id != "tor_project_jobs"
-                and (urlsplit(response.url).hostname or "").casefold()
-                not in DOMINIOS_COM_ADAPTADOR_SEM_SITEMAP
+                and self._deve_pedir_sitemap_padrao(alvo_id, response)
             ):
                 urls_sitemap.add(criar_url_sitemap_padrao(response))
         if fonte == Fonte.QUERIDO_DIARIO.value:

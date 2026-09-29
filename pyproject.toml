@@ -111,6 +111,10 @@ crawler = [
 [tool.setuptools.packages.find]
 where = ["src"]
 
+# Inclui o registro de plataformas (TOML) ao instalar o pacote.
+[tool.setuptools.package-data]
+"observatorio_vagas.crawling" = ["plataformas.toml"]
+
 
 # Configura o Pytest.
 [tool.pytest.ini_options]

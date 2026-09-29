@@ -380,6 +380,88 @@ def test_pagina_de_carreiras_consulta_sitemap_dentro_do_mesmo_orcamento(
     assert requisicao_vaga.meta["observatorio_tipo_pagina"] == "detalhe_vaga"
 
 
+def test_quickin_segue_so_o_sitemap_da_propria_empresa(tmp_path: Path) -> None:
+    """O índice do Quickin lista centenas de empresas; só a do alvo é seguida."""
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        (
+            "quickin_1,Empresa Quickin,pagina_carreiras,"
+            "https://jobs.quickin.io/peoplecapitalhumano/jobs,true,30,aprovada"
+        ),
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), usar_cache_incremental=False)
+    inicial = asyncio.run(coletar_requisicoes(spider))[0]
+    resposta_inicial = HtmlResponse(
+        url=inicial.url,
+        request=inicial,
+        status=200,
+        body=CORPO_HTML,
+        encoding="utf-8",
+        headers={b"Content-Type": b"text/html; charset=utf-8"},
+    )
+
+    requisicao_sitemap = next(
+        item
+        for item in spider.parse(resposta_inicial, **inicial.cb_kwargs)
+        if isinstance(item, Request)
+    )
+    assert requisicao_sitemap.url == "https://jobs.quickin.io/sitemap.xml"
+
+    indice = TextResponse(
+        url=requisicao_sitemap.url,
+        request=requisicao_sitemap,
+        status=200,
+        body=b"""
+        <sitemapindex>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/reply-jobs.xml</loc></sitemap>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/gcareers-jobs.xml</loc></sitemap>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/peoplecapitalhumano-jobs.xml</loc></sitemap>
+        </sitemapindex>
+        """,
+        encoding="utf-8",
+        headers={b"Content-Type": b"application/xml"},
+    )
+    pedidos = [
+        item
+        for item in spider.parse(indice, **requisicao_sitemap.cb_kwargs)
+        if isinstance(item, Request)
+    ]
+
+    assert [pedido.url for pedido in pedidos] == [
+        "https://jobs.quickin.io/sitemaps/peoplecapitalhumano-jobs.xml"
+    ]
+
+
+def test_smartrecruiters_nao_pede_sitemap_da_plataforma(tmp_path: Path) -> None:
+    """Regressão: api.smartrecruiters.com/sitemap.xml era bloqueado a cada coleta."""
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        (
+            "sr_1,Bosch,pagina_carreiras,"
+            "https://jobs.smartrecruiters.com/BoschGroup,true,10,aprovada"
+        ),
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), usar_cache_incremental=False)
+    inicial = asyncio.run(coletar_requisicoes(spider))[0]
+    assert inicial.url.startswith("https://api.smartrecruiters.com/v1/companies/BoschGroup/")
+    resposta = TextResponse(
+        url=inicial.url,
+        request=inicial,
+        status=200,
+        body=b'{"content": [], "totalFound": 0}',
+        encoding="utf-8",
+        headers={b"Content-Type": b"application/json"},
+    )
+
+    pedidos = [
+        item for item in spider.parse(resposta, **inicial.cb_kwargs) if isinstance(item, Request)
+    ]
+
+    assert not any(pedido.url.endswith("/sitemap.xml") for pedido in pedidos)
+
+
 def test_spider_ativa_segunda_barreira() -> None:
     """O spider novo deve ativar o middleware de política."""
 

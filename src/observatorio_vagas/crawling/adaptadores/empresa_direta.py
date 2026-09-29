@@ -37,6 +37,13 @@ DOMINIO_API_ABLER = "hulk-smash.abler.com.br"
 DOMINIO_SMARTRECRUITERS = "jobs.smartrecruiters.com"
 DOMINIO_CARREIRAS_SMARTRECRUITERS = "careers.smartrecruiters.com"
 DOMINIO_API_SMARTRECRUITERS = "api.smartrecruiters.com"
+DOMINIO_BRADESCO = "banco.bradesco"
+DOMINIO_CSOD_BRADESCO = "bradesco.csod.com"
+DOMINIO_SICOOB = "www.sicoob.com.br"
+DOMINIO_EMPREGARE_SICOOB = "sicoob.empregare.com"
+DOMINIO_LARSIL = "vagas.larsil.com.br"
+DOMINIO_PORTAL_LG = "prd-pc1.lg.com.br"
+SUFIXO_WORKDAY = ".myworkdayjobs.com"
 CAMINHO_API_ABLER = "/api/company/v1/careers_pages"
 CAMINHO_API_SMARTRECRUITERS = "/v1/companies"
 SUFIXO_PORTAL_SOLIDES = ".vagas.solides.com.br"
@@ -68,6 +75,10 @@ class AdaptadorEmpresaDireta(AdaptadorGenericoHTML):
                 return _descobrir_resultado_abler(resposta)
             if dominio == DOMINIO_API_SMARTRECRUITERS:
                 return _descobrir_resultado_smartrecruiters(resposta)
+            if dominio.endswith(SUFIXO_WORKDAY):
+                caminho = urlsplit(resposta.url).path
+                if re.fullmatch(r"/wday/cxs/[^/]+/[^/]+/jobs", caminho):
+                    return _descobrir_resultado_workday(resposta)
             if dominio.endswith(SUFIXO_PORTAL_SOLIDES):
                 return _descobrir_listagem_solides(resposta)
             if (
@@ -87,8 +98,22 @@ class AdaptadorEmpresaDireta(AdaptadorGenericoHTML):
         if not isinstance(resposta, TextResponse):
             return tuple(encontrados.values())
         dominio = (urlsplit(resposta.url).hostname or "").casefold()
+        if dominio == DOMINIO_BRADESCO:
+            return _descobrir_portal_bradesco(resposta)
+        if dominio == DOMINIO_SICOOB:
+            return _descobrir_portal_sicoob(resposta)
         if dominio == DOMINIO_LEVER:
             return _descobrir_vagas_lever(resposta, encontrados)
+        if dominio == DOMINIO_CSOD_BRADESCO:
+            return _descobrir_vagas_csod_bradesco(resposta, encontrados)
+        if dominio == DOMINIO_EMPREGARE_SICOOB:
+            return _descobrir_vagas_empregare_sicoob(resposta, encontrados)
+        if dominio == DOMINIO_LARSIL:
+            return _descobrir_vagas_larsil(resposta, encontrados)
+        if dominio == DOMINIO_PORTAL_LG:
+            return _descobrir_vagas_portal_lg(resposta, encontrados)
+        if dominio.endswith(SUFIXO_WORKDAY):
+            return _descobrir_listagem_workday(resposta)
         if dominio in {DOMINIO_SMARTRECRUITERS, DOMINIO_CARREIRAS_SMARTRECRUITERS}:
             return _descobrir_vagas_smartrecruiters(resposta, encontrados)
         if dominio == DOMINIO_CODAM:
@@ -130,6 +155,281 @@ class AdaptadorEmpresaDireta(AdaptadorGenericoHTML):
                 ),
             )
         return tuple(encontrados.values())
+
+
+def _descobrir_portal_bradesco(resposta: TextResponse) -> tuple[LinkCandidatoVaga, ...]:
+    """Segue somente o quadro CSOD indicado pela página de carreiras do Bradesco."""
+
+    encontrados: dict[str, LinkCandidatoVaga] = {}
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (
+            (destino.hostname or "").casefold() != DOMINIO_CSOD_BRADESCO
+            or not destino.path.startswith("/ux/ats/careersite/")
+            or (parse_qs(destino.query).get("c") or [""])[0].casefold() != "bradesco"
+        ):
+            continue
+        encontrados.setdefault(
+            url,
+            LinkCandidatoVaga(
+                url=url,
+                texto="Portal de vagas Bradesco",
+                evidencias=("portal_csod_bradesco",),
+            ),
+        )
+    return tuple(encontrados.values())
+
+
+def _descobrir_portal_sicoob(resposta: TextResponse) -> tuple[LinkCandidatoVaga, ...]:
+    """Segue somente o quadro Empregare oficialmente ligado pelo Sicoob."""
+
+    encontrados: dict[str, LinkCandidatoVaga] = {}
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (
+            (destino.hostname or "").casefold() != DOMINIO_EMPREGARE_SICOOB
+            or not destino.path.startswith("/pt-br")
+        ):
+            continue
+        texto = " ".join((link.xpath("string(.)").get() or "").split())
+        encontrados.setdefault(
+            url,
+            LinkCandidatoVaga(
+                url=url,
+                texto=texto or "Portal de vagas Sicoob",
+                evidencias=("portal_empregare_sicoob",),
+            ),
+        )
+    return tuple(encontrados.values())
+
+
+def _descobrir_vagas_csod_bradesco(
+    resposta: TextResponse,
+    encontrados: dict[str, LinkCandidatoVaga],
+) -> tuple[LinkCandidatoVaga, ...]:
+    """Reconhece os detalhes públicos CSOD do locatário Bradesco.
+
+    O portal usa a rota ``requisition/<id>``. Não inferimos IDs nem chamamos
+    endpoints internos: a URL precisa estar presente no HTML público.
+    """
+
+    # O genérico pode aceitar qualquer URL que contenha a palavra "vaga".
+    # No CSOD compartilhado, isso poderia misturar outro locatário; nesta
+    # integração a rota e o parâmetro ``c=bradesco`` são a autoridade.
+    encontrados = {}
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (
+            (destino.hostname or "").casefold() != DOMINIO_CSOD_BRADESCO
+            or not re.fullmatch(r"/ux/ats/careersite/\d+/home/requisition/\d+", destino.path)
+            or (parse_qs(destino.query).get("c") or [""])[0].casefold() != "bradesco"
+        ):
+            continue
+        texto = " ".join((link.xpath("string(.)").get() or "").split())
+        encontrados[url] = LinkCandidatoVaga(
+            url=url,
+            texto=texto or "Detalhe de vaga Bradesco",
+            evidencias=("detalhe_vaga_csod_bradesco",),
+        )
+    return tuple(encontrados.values())
+
+
+def _descobrir_vagas_empregare_sicoob(
+    resposta: TextResponse,
+    encontrados: dict[str, LinkCandidatoVaga],
+) -> tuple[LinkCandidatoVaga, ...]:
+    """Lê cards e paginação públicos do quadro Empregare do Sicoob."""
+
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (destino.hostname or "").casefold() != DOMINIO_EMPREGARE_SICOOB:
+            continue
+        texto = " ".join((link.xpath("string(.)").get() or "").split())
+        caminho = destino.path.rstrip("/")
+        if re.fullmatch(r"/pt-br/vaga-[^/]+_\d+", caminho):
+            encontrados[url] = LinkCandidatoVaga(
+                url=url,
+                texto=texto or "Detalhe de vaga Sicoob",
+                evidencias=("detalhe_vaga_empregare_sicoob",),
+            )
+        elif caminho == "/pt-br/vagas" and "pagina" in parse_qs(destino.query):
+            encontrados[url] = LinkCandidatoVaga(
+                url=url,
+                texto=texto or "Próxima página de vagas Sicoob",
+                evidencias=("paginacao_empregare_sicoob",),
+            )
+    return tuple(encontrados.values())
+
+
+def _descobrir_vagas_larsil(
+    resposta: TextResponse,
+    encontrados: dict[str, LinkCandidatoVaga],
+) -> tuple[LinkCandidatoVaga, ...]:
+    """Prioriza detalhes de vaga que a página LARSIL exponha literalmente.
+
+    A página também possui um formulário de currículo. Ele não é tratado como
+    anúncio: só entram links individuais publicados pela própria empresa.
+    """
+
+    # Não deixa o formulário de currículo nem links institucionais virarem
+    # anúncio por engano apenas porque a URL contém "vaga".
+    encontrados = {}
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (destino.hostname or "").casefold() != DOMINIO_LARSIL:
+            continue
+        if not re.fullmatch(r"/(?:vaga|vagas|job|jobs)/[^/]+", destino.path.rstrip("/")):
+            continue
+        texto = " ".join((link.xpath("string(.)").get() or "").split())
+        encontrados[url] = LinkCandidatoVaga(
+            url=url,
+            texto=texto or "Detalhe de vaga LARSIL",
+            evidencias=("detalhe_vaga_larsil",),
+        )
+    return tuple(encontrados.values())
+
+
+def _descobrir_vagas_portal_lg(
+    resposta: TextResponse,
+    encontrados: dict[str, LinkCandidatoVaga],
+) -> tuple[LinkCandidatoVaga, ...]:
+    """Mantém apenas os detalhes públicos do portal LG do INGOH."""
+
+    encontrados = {}
+    for link in resposta.css("a[href]"):
+        url = urldefrag(resposta.urljoin(link.attrib["href"]))[0]
+        destino = urlsplit(url)
+        if (
+            (destino.hostname or "").casefold() != DOMINIO_PORTAL_LG
+            or not destino.path.endswith("/Vaga/Divulgacao")
+            or not (parse_qs(destino.query).get("codigo") or [""])[0]
+        ):
+            continue
+        texto = " ".join((link.xpath("string(.)").get() or "").split())
+        encontrados[url] = LinkCandidatoVaga(
+            url=url,
+            texto=texto or "Detalhe de vaga no portal LG",
+            evidencias=("detalhe_vaga_portal_lg",),
+        )
+    return tuple(encontrados.values())
+
+
+def _descobrir_listagem_workday(resposta: TextResponse) -> tuple[LinkCandidatoVaga, ...]:
+    """Agenda a listagem CXS pública a partir de um portal Workday.
+
+    Cada locatário expõe o identificador no hostname e o site de carreiras no
+    caminho público. A rota CXS é a consulta que o próprio portal utiliza;
+    não montamos IDs de vagas ou consultamos endpoints administrativos.
+    """
+
+    endereco = urlsplit(resposta.url)
+    partes = [parte for parte in endereco.path.split("/") if parte]
+    if len(partes) not in {1, 2}:
+        return ()
+    if len(partes) == 2 and not re.fullmatch(r"[a-z]{2}-[A-Z]{2}", partes[0]):
+        return ()
+    site = partes[-1]
+    locatario = (endereco.hostname or "").split(".")[0]
+    if not re.fullmatch(r"[A-Za-z0-9_-]+", locatario) or not re.fullmatch(
+        r"[A-Za-z0-9_-]+", site
+    ):
+        return ()
+    parametros = urlencode({"limit": 20, "offset": 0})
+    return (
+        LinkCandidatoVaga(
+            url=(
+                f"https://{endereco.hostname}/wday/cxs/{locatario}/{site}/jobs?{parametros}"
+            ),
+            texto=f"Listagem pública Workday ({site})",
+            evidencias=("listagem_workday_cxs",),
+        ),
+    )
+
+
+def _descobrir_resultado_workday(resposta: TextResponse) -> tuple[LinkCandidatoVaga, ...]:
+    """Converte a resposta CXS em detalhes e avança somente a paginação indicada."""
+
+    try:
+        dados = json.loads(resposta.text)
+    except (TypeError, ValueError):
+        return ()
+    if not isinstance(dados, dict):
+        return ()
+    endereco = urlsplit(resposta.url)
+    partes = [parte for parte in endereco.path.split("/") if parte]
+    if len(partes) != 5 or partes[:2] != ["wday", "cxs"] or partes[-1] != "jobs":
+        return ()
+    site = partes[3]
+    parametros = parse_qs(endereco.query)
+    limite = _inteiro_positivo(parametros.get("limit"), padrao=20)
+    deslocamento = _inteiro_positivo(parametros.get("offset"), padrao=0, aceita_zero=True)
+    if limite is None or deslocamento is None:
+        return ()
+
+    locale = _locale_workday_do_site(resposta, site)
+    encontrados: list[LinkCandidatoVaga] = []
+    vagas = dados.get("jobPostings")
+    if isinstance(vagas, list):
+        for vaga in vagas:
+            if not isinstance(vaga, dict):
+                continue
+            caminho = vaga.get("externalPath")
+            if not isinstance(caminho, str) or not caminho.startswith("/job/"):
+                continue
+            titulo = vaga.get("title")
+            texto = " ".join(titulo.split()) if isinstance(titulo, str) else "Vaga Workday"
+            encontrados.append(
+                LinkCandidatoVaga(
+                    url=f"https://{endereco.hostname}/{locale}/{site}{caminho}",
+                    texto=texto[:300],
+                    evidencias=("detalhe_vaga_workday_cxs",),
+                )
+            )
+
+    total = dados.get("total")
+    if isinstance(total, int) and total > deslocamento + limite:
+        parametros["limit"] = [str(limite)]
+        parametros["offset"] = [str(deslocamento + limite)]
+        query = urlencode({chave: valores[-1] for chave, valores in parametros.items()})
+        encontrados.append(
+            LinkCandidatoVaga(
+                url=urlunsplit((endereco.scheme, endereco.netloc, endereco.path, query, "")),
+                texto=f"Próxima página Workday ({site})",
+                evidencias=("paginacao_workday_cxs",),
+            )
+        )
+    return tuple(encontrados)
+
+
+def _inteiro_positivo(
+    valores: list[str] | None,
+    *,
+    padrao: int,
+    aceita_zero: bool = False,
+) -> int | None:
+    """Lê um inteiro de consulta sem aceitar valores negativos ou inválidos."""
+
+    if not valores:
+        return padrao
+    try:
+        valor = int(valores[-1])
+    except (TypeError, ValueError):
+        return None
+    return valor if valor > 0 or (aceita_zero and valor == 0) else None
+
+
+def _locale_workday_do_site(resposta: TextResponse, site: str) -> str:
+    """Preserva o locale do quadro de origem; portais sem locale usam en-US."""
+
+    partes = [parte for parte in urlsplit(resposta.url).path.split("/") if parte]
+    if len(partes) == 2 and partes[-1] == site:
+        return partes[0]
+    return "en-US"
 
 
 def _descobrir_vagas_codam(

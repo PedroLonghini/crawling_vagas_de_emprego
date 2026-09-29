@@ -706,6 +706,176 @@ def test_adaptador_smartrecruiters_cria_detalhes_e_pagina_a_api_publica() -> Non
     ]
 
 
+def test_adaptador_bradesco_segue_apenas_o_portal_csod_oficial() -> None:
+    resposta = _criar_resposta(
+        """
+        <a href="https://bradesco.csod.com/ux/ats/careersite/1/home?c=bradesco">
+          Encontrar vagas
+        </a>
+        <a href="https://outra.csod.com/ux/ats/careersite/1/home?c=outra">Ignorar</a>
+        """,
+        url="https://banco.bradesco/carreiras/index.shtm",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://bradesco.csod.com/ux/ats/careersite/1/home?c=bradesco",
+            ("portal_csod_bradesco",),
+        ),
+    ]
+
+
+def test_adaptador_csod_bradesco_reconhece_detalhe_publico() -> None:
+    resposta = _criar_resposta(
+        """
+        <a href="/ux/ats/careersite/1/home/requisition/84642?c=bradesco">
+          Analista de Dados
+        </a>
+        <a href="/ux/ats/careersite/1/home/requisition/99?c=outro">Ignorar</a>
+        """,
+        url="https://bradesco.csod.com/ux/ats/careersite/1/home?c=bradesco",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://bradesco.csod.com/ux/ats/careersite/1/home/requisition/84642?c=bradesco",
+            ("detalhe_vaga_csod_bradesco",),
+        ),
+    ]
+
+
+def test_adaptador_sicoob_segue_quadro_empregare_e_pagina_vagas() -> None:
+    portal = _criar_resposta(
+        '<a href="https://sicoob.empregare.com/pt-br/vagas">Confira vagas</a>',
+        url="https://www.sicoob.com.br/web/sicoob/trabalhe-conosco",
+    )
+    listagem = _criar_resposta(
+        """
+        <a href="/pt-br/vaga-gerente-de-relacionamento_182248">Gerente</a>
+        <a href="/pt-br/vagas?pagina=2">2</a>
+        """,
+        url="https://sicoob.empregare.com/pt-br/vagas",
+    )
+
+    candidatos_portal = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(portal)
+    candidatos_listagem = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(listagem)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos_portal] == [
+        (
+            "https://sicoob.empregare.com/pt-br/vagas",
+            ("portal_empregare_sicoob",),
+        ),
+    ]
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos_listagem] == [
+        (
+            "https://sicoob.empregare.com/pt-br/vaga-gerente-de-relacionamento_182248",
+            ("detalhe_vaga_empregare_sicoob",),
+        ),
+        (
+            "https://sicoob.empregare.com/pt-br/vagas?pagina=2",
+            ("paginacao_empregare_sicoob",),
+        ),
+    ]
+
+
+def test_adaptador_larsil_nao_transforma_formulario_generico_em_vaga() -> None:
+    resposta = _criar_resposta(
+        """
+        <form action="/candidatura"><select name="vaga"><option>Vaga escolhida</option></select></form>
+        <a href="/vaga/operador-de-maquinas">Operador de máquinas</a>
+        """,
+        url="https://vagas.larsil.com.br/",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://vagas.larsil.com.br/vaga/operador-de-maquinas",
+            ("detalhe_vaga_larsil",),
+        ),
+    ]
+
+
+def test_adaptador_portal_lg_reconhece_somente_detalhe_com_codigo() -> None:
+    resposta = _criar_resposta(
+        """
+        <a href="/Vagas/c/abc/p/portaldevagas/pt-BR/Vaga/Divulgacao?codigo=abc123">
+          Analista Administrativo
+        </a>
+        <a href="/Vagas/c/abc/p/portaldevagas/pt-BR/Busca/Vagas">Listagem</a>
+        """,
+        url="https://prd-pc1.lg.com.br/Vagas/c/abc/p/portaldevagas/pt-BR/Busca/Vagas",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://prd-pc1.lg.com.br/Vagas/c/abc/p/portaldevagas/pt-BR/Vaga/Divulgacao?codigo=abc123",
+            ("detalhe_vaga_portal_lg",),
+        ),
+    ]
+
+
+def test_adaptador_workday_consulta_listagem_publica_cxs() -> None:
+    resposta = _criar_resposta(
+        "<div id='root'></div>",
+        url="https://alliancewd.wd3.myworkdayjobs.com/pt-BR/renault-group-careers",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/renault-group-careers/jobs?limit=20&offset=0",
+            ("listagem_workday_cxs",),
+        ),
+    ]
+
+
+def test_adaptador_workday_cria_detalhes_e_paginacao() -> None:
+    resposta = TextResponse(
+        url=(
+            "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/"
+            "renault-group-careers/jobs?limit=2&offset=0"
+        ),
+        status=200,
+        body=json.dumps(
+            {
+                "total": 3,
+                "jobPostings": [
+                    {"title": "Analista de Dados", "externalPath": "/job/Curitiba/Analista_JR1"},
+                    {"title": "Técnico", "externalPath": "/job/Sao-Paulo/Tecnico_JR2"},
+                ],
+            }
+        ).encode(),
+        encoding="utf-8",
+        headers={b"Content-Type": b"application/json"},
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
+        (
+            "https://alliancewd.wd3.myworkdayjobs.com/en-US/renault-group-careers/job/Curitiba/Analista_JR1",
+            ("detalhe_vaga_workday_cxs",),
+        ),
+        (
+            "https://alliancewd.wd3.myworkdayjobs.com/en-US/renault-group-careers/job/Sao-Paulo/Tecnico_JR2",
+            ("detalhe_vaga_workday_cxs",),
+        ),
+        (
+            "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/renault-group-careers/jobs?limit=2&offset=2",
+            ("paginacao_workday_cxs",),
+        ),
+    ]
+
+
 def test_descobre_endpoint_json_publico_de_vagas_no_estado_inicial() -> None:
     from observatorio_vagas.crawling.adaptadores.generico import descobrir_endpoints_json_publicos
 

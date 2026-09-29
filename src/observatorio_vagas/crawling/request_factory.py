@@ -1,6 +1,7 @@
 """Criação segura das requisições utilizadas pelo crawler."""
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from typing import Any
@@ -41,6 +42,11 @@ DOMINIO_ABLER = "ats.abler.com.br"
 DOMINIO_API_ABLER = "hulk-smash.abler.com.br"
 DOMINIO_SMARTRECRUITERS = "jobs.smartrecruiters.com"
 DOMINIO_API_SMARTRECRUITERS = "api.smartrecruiters.com"
+DOMINIO_BRADESCO = "banco.bradesco"
+DOMINIO_CSOD_BRADESCO = "bradesco.csod.com"
+DOMINIO_SICOOB = "www.sicoob.com.br"
+DOMINIO_EMPREGARE_SICOOB = "sicoob.empregare.com"
+SUFIXO_WORKDAY = ".myworkdayjobs.com"
 AGENTE_USUARIO_LULLY = "Mozilla/5.0 (compatible; ObservatorioVagas/1.0; +https://empregos.com.br)"
 
 
@@ -363,6 +369,10 @@ def _eh_api_publica_companheira(*, dominio_origem: str, dominio_destino: str) ->
     ) or (dominio_origem == DOMINIO_ABLER and dominio_destino == DOMINIO_API_ABLER) or (
         dominio_origem == DOMINIO_SMARTRECRUITERS
         and dominio_destino == DOMINIO_API_SMARTRECRUITERS
+    ) or (
+        dominio_origem == DOMINIO_BRADESCO and dominio_destino == DOMINIO_CSOD_BRADESCO
+    ) or (
+        dominio_origem == DOMINIO_SICOOB and dominio_destino == DOMINIO_EMPREGARE_SICOOB
     )
 
 
@@ -377,17 +387,42 @@ def _cabecalhos_especificos(url: str) -> dict[str, str]:
         DOMINIO_API_SMARTRECRUITERS,
     }:
         return {"Accept": "application/json, text/plain;q=0.9, */*;q=0.8"}
+    if dominio.endswith(SUFIXO_WORKDAY):
+        return {"Accept": "application/json, text/plain;q=0.9, */*;q=0.8"}
     if dominio in {"lullyhair.com.br", "www.lullyhair.com.br"}:
         return {"User-Agent": AGENTE_USUARIO_LULLY}
     return {}
 
 
 def _configuracao_requisicao_especial(url: str) -> tuple[str, bytes | None, dict[str, str]]:
-    """Cria POSTs apenas para as consultas públicas documentadas do Senior."""
+    """Cria POSTs apenas para as consultas públicas Senior e Workday."""
 
     endereco = urlsplit(url)
     parametros = dict(parse_qsl(endereco.query, keep_blank_values=True))
     cabecalhos = _cabecalhos_especificos(url)
+    if (
+        (endereco.hostname or "").casefold().endswith(SUFIXO_WORKDAY)
+        and re.fullmatch(r"/wday/cxs/[^/]+/[^/]+/jobs", endereco.path)
+    ):
+        try:
+            limite = int(parametros.get("limit", "20"))
+            deslocamento = int(parametros.get("offset", "0"))
+        except ValueError:
+            return "GET", None, cabecalhos
+        if limite < 1 or deslocamento < 0:
+            return "GET", None, cabecalhos
+        return (
+            "POST",
+            json.dumps(
+                {
+                    "appliedFacets": {},
+                    "limit": limite,
+                    "offset": deslocamento,
+                    "searchText": "",
+                }
+            ).encode("utf-8"),
+            {**cabecalhos, "Content-Type": "application/json"},
+        )
     if endereco.hostname != DOMINIO_SENIOR:
         return "GET", None, cabecalhos
     tenant = parametros.get("tenant", "")

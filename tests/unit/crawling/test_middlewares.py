@@ -148,6 +148,36 @@ def test_permite_api_publica_companheira_da_smartrecruiters() -> None:
     ]
 
 
+def test_permite_portal_csod_exclusivo_do_bradesco() -> None:
+    middleware, stats = criar_middleware()
+    request = Request(
+        url="https://bradesco.csod.com/ux/ats/careersite/1/home/requisition/84642?c=bradesco",
+        cb_kwargs={"fonte": "pagina_carreiras"},
+        meta=metadados_autorizados(dominio="banco.bradesco"),
+    )
+
+    assert middleware.process_request(request) is None
+    assert stats.inc_value.call_args_list == [
+        (("observatorio/politica/api_publica_companheira",), {}),
+        (("observatorio/politica/requisicoes_autorizadas",), {}),
+    ]
+
+
+def test_permite_portal_empregare_exclusivo_do_sicoob() -> None:
+    middleware, stats = criar_middleware()
+    request = Request(
+        url="https://sicoob.empregare.com/pt-br/vagas?pagina=2",
+        cb_kwargs={"fonte": "pagina_carreiras"},
+        meta=metadados_autorizados(dominio="www.sicoob.com.br"),
+    )
+
+    assert middleware.process_request(request) is None
+    assert stats.inc_value.call_args_list == [
+        (("observatorio/politica/api_publica_companheira",), {}),
+        (("observatorio/politica/requisicoes_autorizadas",), {}),
+    ]
+
+
 def test_permite_redirecionamento_oficial_da_smartrecruiters() -> None:
     middleware, stats = criar_middleware()
     request = Request(

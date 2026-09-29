@@ -1,7 +1,7 @@
 """Exceções mínimas para recursos licenciados hospedados fora do portal CKAN."""
 
 import re
-from urllib.parse import urlsplit
+from urllib.parse import parse_qs, urlsplit
 
 from scrapy import Request
 
@@ -11,6 +11,10 @@ _RECURSO_ES = re.compile(
 )
 _API_ABLER = re.compile(r"/api/company/v1/careers_pages/[a-z0-9_-]+/vacancies$")
 _API_SMARTRECRUITERS = re.compile(r"/v1/companies/[A-Za-z0-9_-]+/postings$")
+_ROTA_CSOD_BRADESCO = re.compile(
+    r"/ux/ats/careersite/\d+/home(?:/requisition/\d+)?$"
+)
+_ROTA_EMPREGARE_SICOOB = re.compile(r"/pt-br(?:/vagas|/vaga-[^/]+_\d+)?$")
 
 
 def permite_redirecionamento_recurso(request: Request) -> bool:
@@ -35,6 +39,18 @@ def permite_redirecionamento_recurso(request: Request) -> bool:
             and destino.netloc == "careers.smartrecruiters.com"
             and origem.path == destino.path
             and origem.query == destino.query
+        )
+    if request.meta.get("observatorio_dominio") == "banco.bradesco":
+        return (
+            origem.scheme == "https"
+            and origem.netloc == "banco.bradesco"
+            and destino.scheme == "https"
+            and destino.netloc == "bradesco.csod.com"
+            and _ROTA_CSOD_BRADESCO.fullmatch(destino.path) is not None
+            and (
+                not destino.query
+                or (parse_qs(destino.query).get("c") or [""])[0].casefold() == "bradesco"
+            )
         )
     if request.meta.get("observatorio_dominio") != "dados.es.gov.br":
         return False
@@ -68,6 +84,19 @@ def permite_api_publica_companheira(request: Request) -> bool:
             destino.scheme == "https"
             and destino.netloc == "hulk-smash.abler.com.br"
             and _API_ABLER.fullmatch(destino.path) is not None
+        )
+    if request.meta.get("observatorio_dominio") == "banco.bradesco":
+        return (
+            destino.scheme == "https"
+            and destino.netloc == "bradesco.csod.com"
+            and _ROTA_CSOD_BRADESCO.fullmatch(destino.path) is not None
+            and (parse_qs(destino.query).get("c") or [""])[0].casefold() == "bradesco"
+        )
+    if request.meta.get("observatorio_dominio") == "www.sicoob.com.br":
+        return (
+            destino.scheme == "https"
+            and destino.netloc == "sicoob.empregare.com"
+            and _ROTA_EMPREGARE_SICOOB.fullmatch(destino.path) is not None
         )
     return (
         request.meta.get("observatorio_dominio") == "jobs.smartrecruiters.com"

@@ -9,6 +9,8 @@ from hashlib import sha256
 from typing import Any
 from urllib.parse import urljoin, urlsplit
 
+from observatorio_vagas.extraction.workday import eh_detalhe_workday, extrair_vaga_workday
+
 
 @dataclass(frozen=True, slots=True)
 class ResultadoJsonPublico:
@@ -74,6 +76,10 @@ def extrair_vagas_json_publico(
         dados = json.loads(corpo.decode(codificacao, errors="replace"))
     except (TypeError, ValueError):
         return ResultadoJsonPublico(())
+
+    if eh_detalhe_workday(url, dados):
+        vaga_workday = extrair_vaga_workday(dados, url=url)
+        return ResultadoJsonPublico((vaga_workday,) if vaga_workday else ())
 
     if urlsplit(url).hostname == DOMINIO_API_ABLER:
         vagas_abler = _extrair_vagas_abler(dados)
@@ -161,6 +167,9 @@ def _extrair_vagas_abler(dados: object) -> tuple[dict[str, Any], ...]:
             "url": url_candidatura,
             "_observatorio_apply_url": url_candidatura,
             "_observatorio_extrator": "abler_api_publica",
+            # Atributos originais: a leitura completa usa salário, modalidade,
+            # vínculo, nível, prazo e descrição da empresa que estão aqui.
+            "_observatorio_atributos": dict(atributos),
         }
         empresa = _texto(atributos.get("company_name"))
         if empresa:

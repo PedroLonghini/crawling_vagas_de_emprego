@@ -7,6 +7,7 @@ Ele não publica vagas no Empregos e não acessa sua API.
 from __future__ import annotations
 
 import argparse
+import sys
 from collections.abc import Sequence
 from datetime import date, datetime
 from pathlib import Path
@@ -150,6 +151,8 @@ def mostrar_resultado_extracao(
         "Falhas:",
         len(resultado.falhas),
     )
+    if resultado.paginas_do_cache:
+        print("Páginas reaproveitadas do cache:", resultado.paginas_do_cache)
 
     print()
     print("Anúncios preparados")
@@ -188,8 +191,13 @@ def executar(
     sinalizar_sem_anuncios: bool = False,
     registros: tuple[RegistroInventarioBruto, ...] | None = None,
     publicado_em: date | None = None,
+    preparar: bool = True,
+    cache_paginas: Path | None = None,
 ) -> int:
-    """Executa a extração e a persistência autorizada."""
+    """Executa a extração e a persistência autorizada.
+
+    ``preparar=False`` pula a criação de índices, para quem já a fez.
+    """
 
     if publicado_em is not None:
         print("Data de publicação selecionada (Brasília):", publicado_em.isoformat())
@@ -207,6 +215,7 @@ def executar(
             coletado_desde=coletado_desde,
             registros=registros,
             publicado_em=publicado_em,
+            cache_paginas=cache_paginas,
         )
 
     except (
@@ -218,6 +227,27 @@ def executar(
         print("Não foi possível processar as respostas brutas:")
         print(erro)
         return 1
+
+    return concluir_extracao(
+        resultado_extracao,
+        confirmar=confirmar,
+        sinalizar_sem_anuncios=sinalizar_sem_anuncios,
+        preparar=preparar,
+    )
+
+
+def concluir_extracao(
+    resultado_extracao: ResultadoProcessamentoExtracao,
+    *,
+    confirmar: bool,
+    sinalizar_sem_anuncios: bool = False,
+    preparar: bool = True,
+) -> int:
+    """Mostra o resultado e grava os anúncios quando autorizado.
+
+    Separada de ``executar`` para que o lote possa juntar pedaços de um alvo
+    extraídos em processos diferentes e concluir uma única vez.
+    """
 
     mostrar_resultado_extracao(resultado_extracao)
 
@@ -248,7 +278,8 @@ def executar(
 
     try:
         with ConexaoMongoDB(configuracoes) as conexao:
-            preparar_banco(conexao.banco)
+            if preparar:
+                preparar_banco(conexao.banco)
 
             repositorio = RepositorioAnunciosMongoDB(conexao.banco)
 
@@ -310,4 +341,9 @@ def main(
 
 
 if __name__ == "__main__":
+    # No Windows, a saída redirecionada usa cp1252; um caractere fora dele
+    # descartava o alvo inteiro. Caracteres impossíveis viram escapes.
+    for fluxo in (sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            fluxo.reconfigure(errors="backslashreplace")
     raise SystemExit(main())

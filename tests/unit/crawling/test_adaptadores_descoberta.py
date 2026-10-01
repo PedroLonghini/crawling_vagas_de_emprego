@@ -179,6 +179,176 @@ def test_generico_descobre_detalhes_e_paginacao_de_json_publico() -> None:
     ]
 
 
+def test_empresa_direta_dhl_aceita_somente_detalhe_publico() -> None:
+    resposta = _criar_resposta(
+        """
+        <a href="/amer/pt/home">Página inicial</a>
+        <a href="/amer/pt/job/Sao-Paulo/Analista-Logistica/12345">Analista</a>
+        <a href="https://externa.example/job/123">Ignorar</a>
+        """,
+        url="https://careers.dhl.com/amer/pt/home",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(c.url, c.evidencias) for c in candidatos] == [
+        (
+            "https://careers.dhl.com/amer/pt/job/Sao-Paulo/Analista-Logistica/12345",
+            ("detalhe_vaga_dhl_publico",),
+        )
+    ]
+
+
+def test_empresa_direta_ceva_isola_vagas_do_quadro_ceva() -> None:
+    resposta = _criar_resposta(
+        """
+        <a href="/CEVALogistics/job/Sao-Paulo/Analista-Logistico/1414550733/">CEVA</a>
+        <a href="/CMA-CGM/job/Sao-Paulo/Analista/1414550733/">Outra empresa</a>
+        <a href="/CEVALogistics/search/">Busca</a>
+        """,
+        url="https://jobs.cmacgm-group.com/CEVALogistics/?locale=pt_BR",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(c.url, c.evidencias) for c in candidatos] == [
+        (
+            "https://jobs.cmacgm-group.com/CEVALogistics/job/Sao-Paulo/Analista-Logistico/1414550733/",
+            ("detalhe_vaga_ceva_publico",),
+        )
+    ]
+
+
+def test_adaptadores_massivos_aceitam_apenas_rotas_publicas_de_detalhe() -> None:
+    """Cargill, Nestlé, Deere e Caterpillar não devem seguir links de menu."""
+
+    casos = [
+        (
+            "https://careers.cargill.com/pt-br/busca-de-vagas?country=Brazil",
+            '<a href="/pt-br/vaga/Primavera/Analista-II/31240/100995176592">Analista</a>'
+            '<a href="/pt-br/sobre">Sobre</a>',
+            "https://careers.cargill.com/pt-br/vaga/Primavera/Analista-II/31240/100995176592",
+            "detalhe_vaga_cargill_publico",
+        ),
+        (
+            "https://www.nestle.com.br/jobs/search-jobs",
+            '<a href="https://jobdetails.nestle.com/job/Rio-de-Janeiro-Vaga/857853701/?feedId=256801">Vaga</a>'
+            '<a href="https://jobdetails.nestle.com/career">Ignorar</a>',
+            "https://jobdetails.nestle.com/job/Rio-de-Janeiro-Vaga/857853701/?feedId=256801",
+            "detalhe_vaga_nestle_publico",
+        ),
+        (
+            "https://jobs.deere.com/search",
+            '<a href="/eightfold/job/Indaiatuba-Analista-SP/1434674700/">Analista</a>'
+            '<a href="/search?startrow=25">2</a>',
+            "https://jobs.deere.com/eightfold/job/Indaiatuba-Analista-SP/1434674700/",
+            "detalhe_vaga_john_deere_publico",
+        ),
+        (
+            "https://careers.caterpillar.com/pt/empregos/",
+            '<a href="/pt/empregos/r0000386930/product-service-consultant/">Consultor</a>'
+            '<a href="/pt/empregos/?page=2">2</a>',
+            "https://careers.caterpillar.com/pt/empregos/r0000386930/product-service-consultant/",
+            "detalhe_vaga_caterpillar_publico",
+        ),
+    ]
+
+    for url, corpo, esperado, evidencia in casos:
+        candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(
+            _criar_resposta(corpo, url=url)
+        )
+        assert any(candidato.url == esperado and candidato.evidencias == (evidencia,) for candidato in candidatos)
+
+
+def test_adaptador_basf_segue_apenas_quadro_successfactors_indicado() -> None:
+    resposta = _criar_resposta(
+        '<a href="https://career5.successfactors.eu/career?company=C0000159936P">Vagas</a>'
+        '<a href="https://career5.successfactors.eu/career?company=outra">Ignorar</a>',
+        url="https://www.basf.com/br/pt/careers/jobs",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(c.url, c.evidencias) for c in candidatos] == [
+        (
+            "https://career5.successfactors.eu/career?company=C0000159936P",
+            ("portal_basf_successfactors",),
+        )
+    ]
+
+
+def test_adaptadores_bunge_schneider_e_honeywell_isolam_detalhes_publicos() -> None:
+    """Os três portais não podem transformar navegação ou login em anúncio."""
+
+    casos = [
+        (
+            "https://jobs.bunge.com/viewalljobs/?locale=pt_BR",
+            '<a href="/job/Analista-de-Dados-Curitiba/1417438333/">Analista</a>'
+            '<a href="/viewalljobs/?locale=pt_BR&startrow=50">2</a>',
+            [
+                (
+                    "https://jobs.bunge.com/job/Analista-de-Dados-Curitiba/1417438333/",
+                    ("detalhe_vaga_bunge_publico",),
+                ),
+                (
+                    "https://jobs.bunge.com/viewalljobs/?locale=pt_BR&startrow=50",
+                    ("paginacao_bunge",),
+                ),
+            ],
+        ),
+        (
+            "https://careers.se.com/jobs?lang=pt-BR",
+            '<a href="/jobs/133824?lang=pt-br">Consultor</a>'
+            '<a href="/brazil?lang=pt-BR">Brasil</a>',
+            [
+                (
+                    "https://careers.se.com/jobs/133824?lang=pt-br",
+                    ("detalhe_vaga_schneider_publico",),
+                )
+            ],
+        ),
+        (
+            "https://careers.honeywell.com/en/sites/Honeywell/jobs",
+            '<a href="/en/sites/Honeywell/job/158000/">Engenheira</a>'
+            '<a href="/en/sites/Honeywell/login">Login</a>',
+            [
+                (
+                    "https://careers.honeywell.com/en/sites/Honeywell/job/158000/",
+                    ("detalhe_vaga_honeywell_publico",),
+                )
+            ],
+        ),
+    ]
+
+    for url, corpo, esperados in casos:
+        candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(
+            _criar_resposta(corpo, url=url)
+        )
+        assert [(c.url, c.evidencias) for c in candidatos] == esperados
+
+
+def test_adaptador_tetra_pak_separa_detalhe_publico_de_navegacao() -> None:
+    resposta = _criar_resposta(
+        '<a href="/job/Monte-Mor-Aprendiz-SP/100596-pt_BR/">Aprendiz</a>'
+        '<a href="/viewalljobs/?locale=pt_BR&startrow=20">2</a>'
+        '<a href="/content/sobre">Sobre</a>',
+        url="https://jobs.tetrapak.com/viewalljobs/?locale=pt_BR",
+    )
+
+    candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
+
+    assert [(c.url, c.evidencias) for c in candidatos] == [
+        (
+            "https://jobs.tetrapak.com/job/Monte-Mor-Aprendiz-SP/100596-pt_BR/",
+            ("detalhe_vaga_tetra_pak_publico",),
+        ),
+        (
+            "https://jobs.tetrapak.com/viewalljobs/?locale=pt_BR&startrow=20",
+            ("paginacao_tetra_pak",),
+        ),
+    ]
+
+
 def test_querido_diario_pagina_busca_sem_seguir_cdn_externa() -> None:
     """O volume cresce por offset e continua no domínio autorizado."""
 
@@ -862,11 +1032,11 @@ def test_adaptador_workday_cria_detalhes_e_paginacao() -> None:
 
     assert [(candidato.url, candidato.evidencias) for candidato in candidatos] == [
         (
-            "https://alliancewd.wd3.myworkdayjobs.com/en-US/renault-group-careers/job/Curitiba/Analista_JR1",
+            "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/renault-group-careers/job/Curitiba/Analista_JR1",
             ("detalhe_vaga_workday_cxs",),
         ),
         (
-            "https://alliancewd.wd3.myworkdayjobs.com/en-US/renault-group-careers/job/Sao-Paulo/Tecnico_JR2",
+            "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/renault-group-careers/job/Sao-Paulo/Tecnico_JR2",
             ("detalhe_vaga_workday_cxs",),
         ),
         (
@@ -990,4 +1160,40 @@ def test_estrela_descobre_cidade_cargo_mas_exclui_banco() -> None:
     candidatos = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(resposta)
     assert [c.url for c in candidatos] == [
         "https://rh.estreladolar.com.br/jacarei/auxiliar-financeiro"
+    ]
+
+
+def test_adaptadores_accor_e_volvo_isolam_detalhes_publicos() -> None:
+    """Accor pagina a busca e Volvo expõe detalhes com rotas distintas."""
+
+    accor = _criar_resposta(
+        '<a href="/global/en/job/gerente-de-contas-pleno-jid-111036">Gerente</a>'
+        '<a href="/global/en/jobs?options=336&page=2">2</a>'
+        '<a href="/global/en/brazil">Brasil</a>',
+        url="https://careers.accor.com/global/en/jobs?options=336&page=1",
+    )
+    volvo = _criar_resposta(
+        '<a href="/job/Curitiba-Data-Engineer-81260-900/1369089555/">Data</a>'
+        '<a href="/content/Locations---BR/?locale=pt_BR">Localização</a>',
+        url="https://jobs.volvogroup.com/?locale=pt_BR",
+    )
+
+    candidatos_accor = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(accor)
+    candidatos_volvo = selecionar_adaptador(Fonte.PAGINA_CARREIRAS).descobrir(volvo)
+
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos_accor] == [
+        (
+            "https://careers.accor.com/global/en/job/gerente-de-contas-pleno-jid-111036",
+            ("detalhe_vaga_accor_publico",),
+        ),
+        (
+            "https://careers.accor.com/global/en/jobs?options=336&page=2",
+            ("paginacao_accor",),
+        ),
+    ]
+    assert [(candidato.url, candidato.evidencias) for candidato in candidatos_volvo] == [
+        (
+            "https://jobs.volvogroup.com/job/Curitiba-Data-Engineer-81260-900/1369089555/",
+            ("detalhe_vaga_volvo_publico",),
+        )
     ]

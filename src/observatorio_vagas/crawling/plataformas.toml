@@ -136,3 +136,26 @@ portais = ["www.sicoob.com.br"]
 host = "sicoob.empregare.com"
 caminho = '/pt-br(?:/vagas|/vaga-[^/]+_\d+)?'
 exemplo = "https://sicoob.empregare.com/pt-br/vagas?pagina=2"
+
+[[plataforma]]
+nome = "nestle"
+exemplo_portal = "https://www.nestle.com.br/jobs/search-jobs"
+portais = ["www.nestle.com.br"]
+sitemap = "nenhum"
+
+[[plataforma.companheiro]]
+host = "jobdetails.nestle.com"
+caminho = '/job/[^/]+/\d+/'
+exemplo = "https://jobdetails.nestle.com/job/Rio-de-Janeiro-Banco-de-Talentos-RJ-22775-055/857853701/?feedId=256801"
+
+[[plataforma]]
+nome = "basf"
+exemplo_portal = "https://www.basf.com/br/pt/careers/jobs"
+portais = ["www.basf.com"]
+sitemap = "nenhum"
+
+[[plataforma.companheiro]]
+host = "career5.successfactors.eu"
+caminho = '/career'
+consulta = { company = "C0000159936P" }
+exemplo = "https://career5.successfactors.eu/career?company=C0000159936P"

@@ -78,7 +78,11 @@ def _converter_data(
             # O Python entende +00:00, enquanto algumas fontes usam Z.
             texto_normalizado = texto.removesuffix("Z") + ("+00:00" if texto.endswith("Z") else "")
 
-            return datetime.fromisoformat(texto_normalizado)
+            momento = datetime.fromisoformat(texto_normalizado)
+
+            # Sem fuso horário, a hora não é confiável (o modelo exige fuso):
+            # fica só a data, como "2027-04-10T23:59" -> 2027-04-10.
+            return momento.date() if momento.tzinfo is None else momento
 
         return date.fromisoformat(texto)
 

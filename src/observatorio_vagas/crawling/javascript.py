@@ -19,8 +19,10 @@ from scrapy.http import HtmlResponse
 from scrapy.http.request import NO_CALLBACK
 from scrapy.utils.defer import maybe_deferred_to_future
 
+from observatorio_vagas.crawling.adaptadores import selecionar_adaptador
 from observatorio_vagas.crawling.adaptadores.generico import AdaptadorGenericoHTML
 from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregaticio
+from observatorio_vagas.domain.enums import Fonte
 from observatorio_vagas.domain.politica_fonte import encontrar_restricao_dominio
 from observatorio_vagas.extraction.json_ld import extrair_job_postings_json_ld
 
@@ -444,9 +446,12 @@ class RenderizacaoJavaScriptMiddleware:
         # suficiente no HTML. Abrir Chromium nesses casos só consome tempo.
         # O navegador fica reservado a listagens que não revelaram nenhuma
         # vaga por leitura estática.
-        if AdaptadorGenericoHTML().descobrir(response) or extrair_job_postings_json_ld(
-            response.text
-        ).vagas:
+        fonte = request.cb_kwargs.get("fonte")
+        try:
+            adaptador = selecionar_adaptador(Fonte(fonte)) if fonte else AdaptadorGenericoHTML()
+        except ValueError:
+            adaptador = AdaptadorGenericoHTML()
+        if adaptador.descobrir(response) or extrair_job_postings_json_ld(response.text).vagas:
             request.meta["observatorio_javascript"] = "dispensado_html_estatico"
             self.crawler.stats.inc_value("observatorio/javascript/dispensado_html_estatico")
             return response

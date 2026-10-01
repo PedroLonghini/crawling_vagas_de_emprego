@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -148,6 +149,59 @@ def carregar_inventario_bruto_desde(
     )
 
 
+def carregar_inventario_bruto_de_cadernos(
+    cadernos: Iterable[Path],
+) -> tuple[RegistroInventarioBruto, ...]:
+    """Lê os cadernos JSONL gravados durante a coleta.
+
+    Cada linha traz a referência e os mesmos metadados do JSON individual.
+    Ler alguns cadernos evita abrir centenas de milhares de arquivos pequenos.
+    Uma última linha cortada (processo interrompido no meio da escrita) é
+    descartada; uma linha inválida no meio do arquivo é tratada como erro.
+    """
+
+    por_referencia: dict[str, RegistroInventarioBruto] = {}
+
+    for caderno in cadernos:
+        try:
+            linhas = caderno.read_bytes().split(b"\n")
+        except OSError as erro:
+            raise ErroInventarioBruto(f"não foi possível ler o caderno: {caderno}") from erro
+
+        # O último elemento é vazio quando o arquivo termina com quebra de linha.
+        ultima = len(linhas) - 1
+
+        for numero, linha in enumerate(linhas):
+            if not linha.strip():
+                continue
+
+            try:
+                entrada = json.loads(linha.decode("utf-8"))
+            except (UnicodeError, json.JSONDecodeError) as erro:
+                if numero == ultima:
+                    break
+                raise ErroInventarioBruto(
+                    f"linha {numero + 1} inválida no caderno: {caderno}"
+                ) from erro
+
+            if not isinstance(entrada, dict) or not isinstance(entrada.get("referencia"), str):
+                raise ErroInventarioBruto(f"linha {numero + 1} inválida no caderno: {caderno}")
+
+            referencia = entrada["referencia"]
+            por_referencia[referencia] = _registro_de_dados(
+                entrada.get("metadados"),
+                referencia,
+            )
+
+    return tuple(
+        sorted(
+            por_referencia.values(),
+            key=lambda registro: registro.coletado_em,
+            reverse=True,
+        )
+    )
+
+
 def _carregar_registro(
     *,
     caminho: Path,
@@ -173,6 +227,15 @@ def _carregar_registro(
         json.JSONDecodeError,
     ) as erro:
         raise ErroInventarioBruto(f"não foi possível ler os metadados: {referencia}") from erro
+
+    return _registro_de_dados(conteudo, referencia)
+
+
+def _registro_de_dados(
+    conteudo: object,
+    referencia: str,
+) -> RegistroInventarioBruto:
+    """Valida os metadados de uma resposta e monta o registro."""
 
     if not isinstance(conteudo, dict):
         raise ErroInventarioBruto(f"os metadados precisam ser um objeto JSON: {referencia}")

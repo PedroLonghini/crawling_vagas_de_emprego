@@ -1,0 +1,22 @@
+{
+ "jobPostingInfo": {
+  "title": "Hardware Design Engineer Technical Lead",
+  "jobDescription": "The application window is expected to close on: 11/30/2026<h2><b>Meet the Team </b></h2><p>The Common Hardware Group (CHG) creates innovative hardware platforms central to the AI era, powering Cisco’s core Switching, Routing, and Wireless products for organizations globally. Our innovations in silicon, optics, and hardware platforms—like Silicon One—are shaping the technology industry. We&#39;re a global team of creative experts, bringing our unique backgrounds and bold ideas to push boundaries and help each other grow. Because full product development—from design to qualification to production—is within our team, we’re able to think differently, experiment more, and work quickly. Join us to power the future of the digital world. </p><p></p><h2><b>Your Impact </b></h2><p>Hardware design technical lead is a key member of the Cisco Purpose Built Switch hardware team.</p><ul><li><p>Define and design the next generation Hyperscaler Switch hardware based on Silicon One and/or merchant ASIC.</p></li><li><p>Responsible for system and board level specification, schematic capture, FPGA design, ASIC/System level bring up and troubleshooting.</p></li><li><p>The individual is expected to bring up the system to work with multiple groups including ASIC, DFT, Signal Integrity, software, Diagnostics and Manufacturing team to resolve any design issues.</p></li><li><p>Debug and troubleshoot in labs using scopes and analyzers</p></li><li><p>Act as technical liaison with major component Supplier",
+  "location": "San Jose, California, US",
+  "startDate": "2026-10-01",
+  "endDate": "2026-12-01",
+  "timeType": "Full time",
+  "remoteType": "Onsite Only",
+  "jobReqId": "2014522",
+  "jobPostingId": "Hardware-Design-Engineer-Technical-Lead_2014522-1",
+  "externalUrl": "https://cisco.wd5.myworkdayjobs.com/Cisco_Careers/job/San-Jose-California-US/Hardware-Design-Engineer-Technical-Lead_2014522-1",
+  "country": {
+   "descriptor": "United States of America",
+   "id": "bc33aa3152ec42d4995f4791a106ed09"
+  }
+ },
+ "hiringOrganization": {
+  "name": "020 Cisco Systems, Inc.",
+  "url": ""
+ }
+}

@@ -104,6 +104,10 @@ crawler = [
     # filas, deduplicação, seletores HTML e estatísticas.
     "scrapy>=2.17,<3",
 
+    # Lê o HTML das páginas (camadas da leitura completa). Já vem com o
+    # Scrapy, mas o código usa diretamente.
+    "lxml>=5",
+
     # Extrai texto de documentos PDF públicos.
     "pypdf>=6.16,<7",
 ]

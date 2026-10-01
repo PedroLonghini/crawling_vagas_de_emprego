@@ -683,3 +683,56 @@ def test_filtra_processamento_por_alvo_id(
     assert len(resultado.anuncios) == 1
 
     assert resultado.anuncios[0].id_externo == ("vaga-123")
+
+
+def _salvar_paginas_variadas(diretorio_base: Path) -> None:
+    """Páginas de vaga com repetições entre coletas e uma página sem vaga."""
+
+    for hora in range(3):
+        for numero in range(10):
+            # Vagas 0 a 4 aparecem nas três coletas: viram duplicadas.
+            identificador = numero if numero < 5 else numero + 10 * hora
+            salvar_pagina(
+                diretorio_base,
+                html=HTML_VAGA.replace("vaga-123", f"vaga-{identificador}"),
+                tipo_pagina=TipoPaginaColeta.DETALHE_VAGA,
+                coletado_em=datetime(2026, 9, 17, hora, numero, tzinfo=UTC),
+                url=f"https://empresa.example/jobs/vaga-{identificador}",
+            )
+    salvar_pagina(
+        diretorio_base,
+        html="<html><body>Sem vagas</body></html>",
+        tipo_pagina=TipoPaginaColeta.DETALHE_VAGA,
+        coletado_em=datetime(2026, 9, 17, 5, tzinfo=UTC),
+        url="https://empresa.example/sobre",
+    )
+
+
+def test_extracao_em_pedacos_e_identica_a_sequencial(tmp_path: Path) -> None:
+    """Dividir um alvo em pedaços não pode mudar anúncios nem contagens."""
+
+    _salvar_paginas_variadas(tmp_path)
+    registros = carregar_inventario_bruto(tmp_path)
+
+    sequencial = processar_respostas_brutas(tmp_path, registros=registros)
+
+    def comparavel(resultado):
+        # O id do anúncio é aleatório a cada conversão; o resto deve ser igual,
+        # inclusive a ordem e qual observação de cada vaga foi preservada.
+        return replace(
+            resultado,
+            anuncios=tuple(anuncio.model_dump(exclude={"id"}) for anuncio in resultado.anuncios),
+        )
+
+    for tamanho in (1, 4, 7, len(registros)):
+        parciais = [
+            processador.extrair_parcial(tmp_path, registros[inicio : inicio + tamanho])
+            for inicio in range(0, len(registros), tamanho)
+        ]
+
+        assert comparavel(processador.combinar_parciais(parciais)) == comparavel(sequencial)
+
+    # Sanidade do cenário: houve duplicatas e uma página sem vaga.
+    assert sequencial.anuncios_duplicados == 10
+    assert sequencial.paginas_sem_json_ld == 1
+    assert len(sequencial.anuncios) == 20

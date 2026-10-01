@@ -67,6 +67,12 @@ EVIDENCIAS_NAVEGACAO = frozenset(
         "portal_csod_bradesco",
         "portal_empregare_sicoob",
         "paginacao_empregare_sicoob",
+        "paginacao_john_deere",
+        "paginacao_caterpillar",
+        "paginacao_bunge",
+        "paginacao_tetra_pak",
+        "paginacao_accor",
+        "portal_basf_successfactors",
     }
 )
 
@@ -408,6 +414,10 @@ class CatalogoFontesSpider(Spider):
             "tentativas": response.meta.get("retry_times", 0) + 1,
             "javascript": response.meta.get("observatorio_javascript", "desativado"),
             "javascript_diagnostico": response.meta.get("observatorio_javascript_diagnostico", {}),
+            "content_type": response.headers.get(b"Content-Type", b"")
+            .decode("latin-1", errors="replace")
+            .split(";", maxsplit=1)[0],
+            "bytes": len(response.body),
         }
         self.urls_visitadas.setdefault(alvo_id, set()).add(urldefrag(response.url)[0])
         if self.estado_incremental is not None:
@@ -424,6 +434,7 @@ class CatalogoFontesSpider(Spider):
             self.detalhes_novos[alvo_id] += 1
 
         if eh_conteudo_nao_empregaticio(url=response.url, conteudo=response.body):
+            self.resultados_download[alvo_id][response.request.url]["conteudo_ignorado"] = True
             self.logger.info(
                 "Página ignorada por política global de conteúdo: alvo_id=%s url=%s",
                 alvo_id,
@@ -480,6 +491,14 @@ class CatalogoFontesSpider(Spider):
             return
 
         self.respostas_listagem[alvo_id] = response
+        if isinstance(response, HtmlResponse):
+            self.resultados_download[alvo_id][response.request.url]["indicios_html"] = {
+                "links": len(response.css("a[href]")),
+                "scripts": len(
+                    response.css("script[src], script:not([type='application/ld+json'])")
+                ),
+                "raiz_spa": bool(response.css("#__next, #app, #root, [data-reactroot]")),
+            }
 
         # Uma página própria de carreiras também pode expor o sitemap padrão.
         # A URL é do mesmo domínio, continua sujeita ao robots.txt e compete
@@ -791,6 +810,16 @@ class CatalogoFontesSpider(Spider):
                         if not 200 <= r.get("status_http", 0) < 300
                     },
                     "resultados": resultados,
+                    **_diagnosticar_fonte(
+                        resultados=resultados,
+                        candidatos=len(descobertos),
+                        detalhes_http_ok=sum(
+                            200 <= resultados[u].get("status_http", 0) < 300
+                            for u in descobertos
+                            if u in resultados
+                        ),
+                        candidatos_nao_agendados=len(descobertos - agendadas),
+                    ),
                 }
             )
         return {
@@ -820,6 +849,7 @@ class CatalogoFontesSpider(Spider):
         self.resultados_download.setdefault(alvo_id, {})[falha.request.url] = {
             "erro": type(falha.value).__name__,
             "tentativas": falha.request.meta.get("retry_times", 0) + 1,
+            "tipo_pagina": falha.request.meta.get("observatorio_tipo_pagina"),
         }
         self.logger.warning(
             "Download não concluído: alvo_id=%s url=%s erro=%s "
@@ -839,6 +869,98 @@ class CatalogoFontesSpider(Spider):
         timeout, tentativas = self.estado_incremental.configuracao_download(alvo_id)
         requisicao.meta["download_timeout"] = timeout
         requisicao.meta["max_retry_times"] = tentativas
+
+
+def _diagnosticar_fonte(
+    *,
+    resultados: dict[str, dict[str, Any]],
+    candidatos: int,
+    detalhes_http_ok: int,
+    candidatos_nao_agendados: int,
+) -> dict[str, str]:
+    """Classifica a etapa que impediu uma fonte de produzir detalhes acessíveis."""
+
+    paginas = tuple(resultados.values())
+    listagens = tuple(p for p in paginas if p.get("tipo_pagina") == "inicial")
+    listagens_ok = tuple(p for p in listagens if 200 <= p.get("status_http", 0) < 300)
+    erros_http = tuple(p for p in paginas if p.get("status_http", 0) >= 400)
+    erros_rede = tuple(p for p in paginas if p.get("erro"))
+
+    if any(p.get("conteudo_ignorado") for p in paginas):
+        return {
+            "diagnostico": "conteudo_filtrado",
+            "proxima_acao": "Revisar o motivo do filtro global antes de ajustar a fonte.",
+        }
+
+    if any(p.get("status_http") in {401, 403, 429} for p in listagens + erros_http):
+        return {
+            "diagnostico": "acesso_restrito_ou_rate_limit",
+            "proxima_acao": (
+                "Verificar acesso permitido, limites do site ou solicitar feed oficial."
+            ),
+        }
+
+    if not listagens_ok:
+        if erros_rede:
+            return {
+                "diagnostico": "falha_de_rede",
+                "proxima_acao": (
+                    "Verificar DNS, timeout e disponibilidade antes de repetir a coleta."
+                ),
+            }
+        if erros_http:
+            return {
+                "diagnostico": "erro_http_na_listagem",
+                "proxima_acao": (
+                    "Verificar redirecionamento, URL inicial e status HTTP da listagem."
+                ),
+            }
+        return {
+            "diagnostico": "listagem_sem_resposta",
+            "proxima_acao": (
+                "Conferir se a fonte entrou na coleta e se o limite do lote foi atingido."
+            ),
+        }
+
+    if candidatos == 0:
+        sinais_js = any(
+            pagina.get("javascript") in {"falha", "limite", "renderizado"}
+            or pagina.get("indicios_html", {}).get("raiz_spa")
+            or pagina.get("indicios_html", {}).get("scripts", 0) >= 3
+            for pagina in listagens_ok
+        )
+        if sinais_js:
+            return {
+                "diagnostico": "possivel_javascript_ou_adaptador",
+                "proxima_acao": (
+                    "Testar a renderização seletiva; persistindo o zero, adaptar a plataforma."
+                ),
+            }
+        return {
+            "diagnostico": "nenhum_link_de_vaga_reconhecido",
+            "proxima_acao": (
+                "Inspecionar a resposta bruta por sitemap, JSON público ou padrão de links."
+            ),
+        }
+
+    if detalhes_http_ok == 0:
+        return {
+            "diagnostico": "detalhes_com_falha_de_acesso",
+            "proxima_acao": (
+                "Inspecionar status e URLs dos detalhes; validar redirecionamento e acesso."
+            ),
+        }
+
+    if candidatos_nao_agendados:
+        return {
+            "diagnostico": "cobertura_parcial_ou_limite",
+            "proxima_acao": "Revisar o orçamento e os candidatos que ficaram sem agendamento.",
+        }
+
+    return {
+        "diagnostico": "detalhes_baixados_revisar_extracao",
+        "proxima_acao": "Conferir extração dos detalhes; HTTP 2xx não confirma anúncio extraído.",
+    }
 
 
 def _maximo_listagens(limite_paginas: object) -> int:

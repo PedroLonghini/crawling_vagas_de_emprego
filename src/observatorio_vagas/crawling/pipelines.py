@@ -28,11 +28,13 @@ class PipelineArmazenamentoBruto:
     def __init__(
         self,
         diretorio_base: Path,
+        caminho_caderno: Path | None = None,
     ) -> None:
         """Prepara o armazenamento utilizado pelo pipeline."""
 
         self._armazenamento = ArmazenamentoBrutoLocal(
             diretorio_base=diretorio_base,
+            caminho_caderno=caminho_caderno,
         )
 
     @classmethod
@@ -47,9 +49,18 @@ class PipelineArmazenamentoBruto:
             "data/raw",
         )
 
+        # Caderno JSONL desta execução, informado pelo processamento em lote.
+        caderno_configurado = crawler.settings.get("RAW_INDEX_FILE")
+
         return cls(
             diretorio_base=Path(str(diretorio_configurado)),
+            caminho_caderno=(Path(str(caderno_configurado)) if caderno_configurado else None),
         )
+
+    def close_spider(self, spider: object | None = None) -> None:
+        """Fecha o caderno quando a coleta termina."""
+
+        self._armazenamento.fechar()
 
     def process_item(
         self,

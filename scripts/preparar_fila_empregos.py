@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
@@ -205,6 +206,8 @@ def _documento_payload(item: ItemFilaEmpregos) -> dict[str, Any]:
             else None
         ),
         "payload": preparacao.payload,
+        # Fica fora do payload: não vai para a API nem para payloads_unificados.
+        "_diagnostico": preparacao.diagnostico_leitura,
     }
 
 
@@ -393,4 +396,9 @@ def executar(argumentos: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
+    # No Windows, a saída redirecionada usa cp1252; caracteres fora dele
+    # (ex.: espaço invisível ​ em títulos) derrubavam o relatório.
+    for fluxo in (sys.stdout, sys.stderr):
+        if hasattr(fluxo, "reconfigure"):
+            fluxo.reconfigure(errors="backslashreplace")
     raise SystemExit(executar())

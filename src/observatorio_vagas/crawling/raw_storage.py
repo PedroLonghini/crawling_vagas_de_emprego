@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from hashlib import sha256
 from pathlib import Path
+from typing import BinaryIO
 
 from observatorio_vagas.crawling.contracts import RespostaBruta
 
@@ -36,8 +37,17 @@ class ResultadoArmazenamentoBruto:
 class ArmazenamentoBrutoLocal:
     """Armazena corpos e metadados no sistema de arquivos."""
 
-    def __init__(self, diretorio_base: Path) -> None:
-        """Recebe o diretório onde os arquivos serão guardados."""
+    def __init__(
+        self,
+        diretorio_base: Path,
+        caminho_caderno: Path | None = None,
+    ) -> None:
+        """Recebe o diretório onde os arquivos serão guardados.
+
+        ``caminho_caderno`` é opcional. Quando informado, cada resposta salva
+        também ganha uma linha num único arquivo JSONL. O lote lê esse caderno
+        em vez de abrir um JSON de metadados por resposta.
+        """
 
         # Guardamos o caminho absoluto para evitar ambiguidades.
         self._diretorio_base = diretorio_base.resolve()
@@ -45,6 +55,41 @@ class ArmazenamentoBrutoLocal:
         # raiz aqui evita que a primeira escrita dependa da ordem entre corpo
         # e metadados ou do comportamento do sistema de arquivos.
         self._diretorio_base.mkdir(parents=True, exist_ok=True)
+        self._caminho_caderno = caminho_caderno
+        self._caderno: BinaryIO | None = None
+
+    def fechar(self) -> None:
+        """Fecha o caderno, se houver um aberto."""
+
+        if self._caderno is not None:
+            self._caderno.close()
+            self._caderno = None
+
+    def _anotar_no_caderno(
+        self,
+        referencia_metadados: str,
+        metadados: dict[str, object],
+    ) -> None:
+        """Acrescenta a resposta ao caderno, uma linha JSON por resposta."""
+
+        if self._caminho_caderno is None:
+            return
+
+        if self._caderno is None:
+            self._caminho_caderno.parent.mkdir(parents=True, exist_ok=True)
+            self._caderno = self._caminho_caderno.open("ab")
+
+        linha = json.dumps(
+            {"referencia": referencia_metadados, "metadados": metadados},
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+
+        # Uma linha completa por escrita: se o processo cair, só a última
+        # linha pode ficar cortada, e a leitura a descarta.
+        self._caderno.write(linha + b"\n")
+        self._caderno.flush()
 
     def salvar(
         self,
@@ -157,6 +202,8 @@ class ArmazenamentoBrutoLocal:
                 caminho_metadados,
                 conteudo_metadados,
             )
+
+            self._anotar_no_caderno(referencia_metadados, metadados)
 
         except OSError as erro_original:
             raise ErroArmazenamentoBruto(

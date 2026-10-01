@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 import unicodedata
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.parse import urlsplit
 from uuid import NAMESPACE_URL, UUID, uuid5
@@ -381,6 +381,194 @@ def _associar_anuncio(
     dados["empresa_id"] = empresa_id
 
     return AnuncioVaga.model_validate(dados)
+
+
+@dataclass(frozen=True, slots=True)
+class FalhaResolucaoEmLote:
+    """Anúncio que não pôde ser associado a uma empresa."""
+
+    anuncio_id: UUID
+    mensagem: str
+
+
+@dataclass(frozen=True, slots=True)
+class ResultadoResolucaoEmLote:
+    """Resumo da resolução de empresas de vários anúncios."""
+
+    # Anúncios já associados, na ordem recebida.
+    anuncios: tuple[AnuncioVaga, ...]
+    falhas: tuple[FalhaResolucaoEmLote, ...]
+    empresas_criadas: int
+    empresas_atualizadas: int
+    anuncios_atualizados: int
+
+
+@dataclass(slots=True)
+class CacheEmpresas:
+    """Empresas já resolvidas neste lote, para não consultar o banco de novo.
+
+    Só é seguro quando um único processo resolve empresas por vez, como no
+    processamento em lote, que resolve as empresas no processo principal.
+    """
+
+    # Chave de resolução -> UUID da empresa resolvida.
+    por_chave: dict[tuple[object, ...], UUID]
+    # Estado mais recente de cada empresa, como foi gravado.
+    por_id: dict[UUID, Empresa]
+
+    @classmethod
+    def vazio(cls) -> CacheEmpresas:
+        return cls(por_chave={}, por_id={})
+
+
+def _chave_resolucao(
+    anuncio: AnuncioVaga,
+    extraida: Empresa,
+) -> tuple[object, ...]:
+    """Anúncios com a mesma chave chegam sempre à mesma empresa."""
+
+    if anuncio.empresa_id is not None:
+        return ("associada", anuncio.empresa_id)
+
+    return ("evidencias", extraida.cnpj, extraida.dominio, extraida.id)
+
+
+def resolver_e_associar_empresas_em_lote(
+    anuncios: Sequence[AnuncioVaga],
+    *,
+    repositorio_empresas: RepositorioEmpresas,
+    repositorio_anuncios: RepositorioAnuncios,
+    cache: CacheEmpresas | None = None,
+) -> ResultadoResolucaoEmLote:
+    """Faz o mesmo que ``resolver_e_associar_empresa`` para vários anúncios.
+
+    Os anúncios são agrupados pelas evidências da empresa. Cada grupo é
+    resolvido uma vez, com as mesmas consultas da versão individual, e os
+    dados de todos os anúncios do grupo são incorporados na ordem recebida,
+    como aconteceria processando um por um. As associações são gravadas
+    numa única operação em lote.
+    """
+
+    cache = cache if cache is not None else CacheEmpresas.vazio()
+
+    falhas: list[FalhaResolucaoEmLote] = []
+    grupos: dict[tuple[object, ...], list[tuple[AnuncioVaga, Empresa]]] = {}
+
+    for anuncio in anuncios:
+        try:
+            extraida = extrair_empresa_do_anuncio(anuncio)
+        except ErroResolucaoEmpresa as erro:
+            falhas.append(FalhaResolucaoEmLote(anuncio.id, str(erro)))
+            continue
+
+        grupos.setdefault(_chave_resolucao(anuncio, extraida), []).append((anuncio, extraida))
+
+    empresas_criadas = 0
+    empresas_atualizadas = 0
+    empresa_por_anuncio: dict[UUID, UUID] = {}
+
+    for chave, membros in grupos.items():
+        try:
+            empresa, criada, base = _resolver_grupo(
+                chave,
+                membros,
+                repositorio_empresas=repositorio_empresas,
+                cache=cache,
+            )
+        except ErroResolucaoEmpresa as erro:
+            falhas.extend(FalhaResolucaoEmLote(anuncio.id, str(erro)) for anuncio, _ in membros)
+            continue
+
+        # Incorpora as evidências de cada anúncio, na ordem recebida.
+        for _, extraida in membros:
+            empresa = _empresa_com_dados_novos(empresa, extraida)
+
+        if criada or empresa != base:
+            empresa = repositorio_empresas.salvar(empresa)
+            empresas_criadas += int(criada)
+            empresas_atualizadas += int(not criada)
+
+        cache.por_chave[chave] = empresa.id
+        cache.por_id[empresa.id] = empresa
+
+        for anuncio, _ in membros:
+            empresa_por_anuncio[anuncio.id] = empresa.id
+
+    associados: list[AnuncioVaga] = []
+    alterados: list[AnuncioVaga] = []
+
+    for anuncio in anuncios:
+        empresa_id = empresa_por_anuncio.get(anuncio.id)
+
+        if empresa_id is None:
+            continue
+
+        associado = _associar_anuncio(anuncio, empresa_id=empresa_id)
+        associados.append(associado)
+
+        if associado != anuncio:
+            alterados.append(associado)
+
+    if alterados:
+        repositorio_anuncios.salvar_lote(alterados)
+
+    return ResultadoResolucaoEmLote(
+        anuncios=tuple(associados),
+        falhas=tuple(falhas),
+        empresas_criadas=empresas_criadas,
+        empresas_atualizadas=empresas_atualizadas,
+        anuncios_atualizados=len(alterados),
+    )
+
+
+def _resolver_grupo(
+    chave: tuple[object, ...],
+    membros: Sequence[tuple[AnuncioVaga, Empresa]],
+    *,
+    repositorio_empresas: RepositorioEmpresas,
+    cache: CacheEmpresas,
+) -> tuple[Empresa, bool, Empresa | None]:
+    """Encontra ou cria a empresa do grupo.
+
+    Devolve a empresa inicial, se ela é nova, e o estado de referência
+    usado para saber se houve alteração.
+    """
+
+    empresa_id_cache = cache.por_chave.get(chave)
+
+    if empresa_id_cache is not None:
+        existente = cache.por_id[empresa_id_cache]
+        return existente, False, existente
+
+    primeiro_anuncio, primeira_extraida = membros[0]
+
+    if primeiro_anuncio.empresa_id is not None:
+        existente = cache.por_id.get(primeiro_anuncio.empresa_id) or (
+            repositorio_empresas.buscar_por_id(primeiro_anuncio.empresa_id)
+        )
+
+        if existente is None:
+            raise ErroResolucaoEmpresa(
+                "o anúncio aponta para uma empresa que não existe no repositório"
+            )
+
+        return existente, False, existente
+
+    candidatas = _buscar_empresas_candidatas(
+        extraida=primeira_extraida,
+        repositorio=repositorio_empresas,
+    )
+
+    if len(candidatas) > 1:
+        raise ConflitoResolucaoEmpresa(
+            "CNPJ, domínio e identificador apontam para empresas diferentes"
+        )
+
+    if candidatas:
+        existente = cache.por_id.get(candidatas[0].id, candidatas[0])
+        return existente, False, existente
+
+    return primeira_extraida, True, None
 
 
 def resolver_e_associar_empresa(

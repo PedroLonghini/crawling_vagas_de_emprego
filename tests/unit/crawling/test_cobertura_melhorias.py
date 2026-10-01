@@ -5,7 +5,10 @@ from types import SimpleNamespace
 from scrapy.http import HtmlResponse, Request
 
 from observatorio_vagas.crawling.adaptadores.generico import AdaptadorGenericoHTML
-from observatorio_vagas.crawling.spiders.catalogo_fontes import CatalogoFontesSpider
+from observatorio_vagas.crawling.spiders.catalogo_fontes import (
+    CatalogoFontesSpider,
+    _diagnosticar_fonte,
+)
 from observatorio_vagas.crawling.urls import normalizar_url_vaga
 
 
@@ -82,3 +85,48 @@ def test_relatorio_distingue_http_erro_limite_e_rede(tmp_path):
     assert resumo["agendadas_sem_resposta"] == [urls[3]]
     assert set(resumo["erros"]) == {urls[1], urls[2]}
     assert resumo["erros"][urls[2]]["tentativas"] == 3
+
+
+def test_diagnostico_separa_bloqueio_de_pagina_sem_vagas():
+    bloqueio = _diagnosticar_fonte(
+        resultados={
+            "https://empresa.example/carreiras": {
+                "tipo_pagina": "inicial",
+                "status_http": 403,
+            }
+        },
+        candidatos=0,
+        detalhes_http_ok=0,
+        candidatos_nao_agendados=0,
+    )
+    assert bloqueio["diagnostico"] == "acesso_restrito_ou_rate_limit"
+
+    vazio = _diagnosticar_fonte(
+        resultados={
+            "https://empresa.example/carreiras": {
+                "tipo_pagina": "inicial",
+                "status_http": 200,
+                "indicios_html": {"scripts": 0, "raiz_spa": False},
+            }
+        },
+        candidatos=0,
+        detalhes_http_ok=0,
+        candidatos_nao_agendados=0,
+    )
+    assert vazio["diagnostico"] == "nenhum_link_de_vaga_reconhecido"
+
+
+def test_diagnostico_aponta_possivel_dependencia_javascript():
+    diagnostico = _diagnosticar_fonte(
+        resultados={
+            "https://empresa.example/carreiras": {
+                "tipo_pagina": "inicial",
+                "status_http": 200,
+                "indicios_html": {"scripts": 5, "raiz_spa": True},
+            }
+        },
+        candidatos=0,
+        detalhes_http_ok=0,
+        candidatos_nao_agendados=0,
+    )
+    assert diagnostico["diagnostico"] == "possivel_javascript_ou_adaptador"

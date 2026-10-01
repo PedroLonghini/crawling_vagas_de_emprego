@@ -37,6 +37,14 @@ def test_extrai_vaga_abler_com_url_publica_de_candidatura() -> None:
             "url": "https://empresa.abler.com.br/vagas/analista",
             "_observatorio_apply_url": "https://empresa.abler.com.br/vagas/analista",
             "_observatorio_extrator": "abler_api_publica",
+            "_observatorio_atributos": {
+                "title": "Analista de Dados",
+                "description": "Descricao",
+                "full_url": "https://empresa.abler.com.br/vagas/analista",
+                "company_name": "Empresa",
+                "city": "Sao Paulo",
+                "state": "SP",
+            },
             "hiringOrganization": {"@type": "Organization", "name": "Empresa"},
             "jobLocation": {
                 "@type": "Place",

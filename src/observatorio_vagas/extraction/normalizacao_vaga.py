@@ -49,6 +49,138 @@ class _ExtratorTextoHtml(HTMLParser):
             self.partes.append(texto)
 
 
+_TAGS_QUEBRA_PARAGRAFO = frozenset(
+    {
+        "p",
+        "div",
+        "section",
+        "article",
+        "ul",
+        "ol",
+        "table",
+        "blockquote",
+        "h1",
+        "h2",
+        "h3",
+        "h4",
+        "h5",
+        "h6",
+    },
+)
+
+_TAGS_IGNORADAS = frozenset({"script", "style", "head", "noscript"})
+
+
+class _ExtratorTextoFormatado(HTMLParser):
+    """Extrai o texto visível preservando parágrafos e listas."""
+
+    def __init__(self) -> None:
+        """Prepara o texto acumulado e a profundidade de tags ignoradas."""
+
+        super().__init__(convert_charrefs=True)
+
+        self._partes: list[str] = []
+        self._ignorando = 0
+
+    def handle_starttag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        """Marca quebras de linha ou parágrafo conforme a tag aberta."""
+
+        if tag in _TAGS_IGNORADAS:
+            self._ignorando += 1
+        elif tag == "br":
+            self._partes.append("\n")
+        elif tag == "li":
+            self._partes.append("\n- ")
+        elif tag in _TAGS_QUEBRA_PARAGRAFO:
+            self._partes.append("\n\n")
+        elif tag == "tr":
+            self._partes.append("\n")
+
+    def handle_startendtag(
+        self,
+        tag: str,
+        attrs: list[tuple[str, str | None]],
+    ) -> None:
+        """Trata tags como <br/> sem contar como abertura de bloco."""
+
+        if tag == "br":
+            self._partes.append("\n")
+
+    def handle_endtag(
+        self,
+        tag: str,
+    ) -> None:
+        """Fecha tags ignoradas e separa blocos concluídos."""
+
+        if tag in _TAGS_IGNORADAS:
+            self._ignorando = max(0, self._ignorando - 1)
+        elif tag in _TAGS_QUEBRA_PARAGRAFO:
+            self._partes.append("\n\n")
+        elif tag == "tr":
+            self._partes.append("\n")
+        elif tag in {"td", "th"}:
+            self._partes.append(" ")
+
+    def handle_data(
+        self,
+        data: str,
+    ) -> None:
+        """Guarda o texto visível, descartando scripts e estilos."""
+
+        if not self._ignorando:
+            self._partes.append(data)
+
+    def texto(self) -> str:
+        """Devolve o texto acumulado."""
+
+        return "".join(self._partes)
+
+
+def _normalizar_espacos_preservando_quebras(
+    texto: str,
+) -> str:
+    """Limpa espaços por linha e mantém no máximo uma linha em branco."""
+
+    texto = texto.replace("\r\n", "\n").replace("\r", "\n").replace("\xa0", " ")
+
+    linhas = [re.sub(r"[ \t\f\v]+", " ", linha).strip() for linha in texto.split("\n")]
+
+    resultado: list[str] = []
+
+    for linha in linhas:
+        if linha == "-":
+            continue
+
+        if not linha and (not resultado or not resultado[-1]):
+            continue
+
+        resultado.append(linha)
+
+    return "\n".join(resultado).strip()
+
+
+def _limpar_html_formatado(
+    valor: object,
+) -> str | None:
+    """Remove HTML da descrição mantendo parágrafos, quebras e listas."""
+
+    if valor is None or isinstance(valor, bool) or not isinstance(valor, str):
+        return _limpar_html(valor)
+
+    analisador = _ExtratorTextoFormatado()
+
+    analisador.feed(valor)
+    analisador.close()
+
+    texto = _normalizar_espacos_preservando_quebras(analisador.texto())
+
+    return texto or None
+
+
 def _texto(
     valor: object,
 ) -> str | None:
@@ -866,7 +998,7 @@ def converter_anuncio_em_vaga_canonica(
 
     documento = anuncio.campos_estruturados
 
-    descricao = _limpar_html(
+    descricao = _limpar_html_formatado(
         anuncio.descricao_original,
     )
 

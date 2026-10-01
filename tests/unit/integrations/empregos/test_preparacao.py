@@ -365,3 +365,72 @@ def test_modo_bloqueante_rejeita_politica_sem_permissao() -> None:
     assert any(
         bloqueio.codigo.value == "fonte_sem_permissao" for bloqueio in captura.value.bloqueios
     )
+
+
+def test_leitura_completa_entra_no_payload_e_diagnostico_fica_fora() -> None:
+    """Valores de campos_estruturados["_leitura"] passam pela prontidão normal."""
+
+    empresa, recrutador, anuncio, vaga = criar_cenario_completo()
+    url_vaga = str(anuncio.url)
+    leitura = {
+        "campos": {
+            "company": {"applyUrl": url_vaga + "/candidatar", "name": "Atlas Contratante"},
+            "description": "Atividades\nDesenvolver serviços em Python e manter integrações com parceiros.\n\n"
+            "Requisitos\nExperiência com APIs REST, testes automatizados e bancos relacionais.",
+            "location": {"address": "Campinas, SP"},
+            "salary": {"min": 5000, "max": 7000},
+            "workplaceTypes": "Hybrid",
+            "employmentStatus": "CONTRACT",
+            "experienceLevel": "MID_SENIOR_LEVEL",
+        },
+        "diagnostico": {"camadas_encontradas": ["json_ld"], "campos": {}, "nao_mapeado": []},
+        "extras": {"salary_periodo": "mensal"},
+    }
+    anuncio = anuncio.model_copy(
+        update={"campos_estruturados": {**anuncio.campos_estruturados, "_leitura": leitura}}
+    )
+
+    resultado = preparar_publicacao_empregos(
+        empresa=empresa,
+        recrutador=recrutador,
+        anuncio=anuncio,
+        vaga=vaga,
+        politica_fonte=POLITICA_APROVADA,
+    )
+    payload = resultado.payload
+
+    assert payload["company"]["applyUrl"].endswith("/candidatar")
+    assert payload["company"]["name"] == "Atlas Contratante"
+    assert payload["location"]["address"] == "Campinas, SP"
+    assert payload["salary"] == {"min": 5000, "max": 7000}
+    assert payload["workplaceTypes"] == "Hybrid"
+    assert payload["employmentStatus"] == "CONTRACT"
+    assert payload["experienceLevel"] == "MID_SENIOR_LEVEL"
+    # Sem data lida, nenhuma data calculada é enviada.
+    assert "expireAt" not in payload
+    assert "_diagnostico" not in payload
+    assert resultado.diagnostico_leitura["camadas_encontradas"] == ["json_ld"]
+
+
+def test_sem_nome_da_empresa_na_leitura_a_vaga_nao_e_publicada() -> None:
+    """Não se herda o nome da conta: sem nome exibido, sem payload."""
+
+    empresa, recrutador, anuncio, vaga = criar_cenario_completo()
+    leitura = {
+        "campos": {"company": {"applyUrl": str(anuncio.url)}, "description": vaga.descricao_normalizada},
+        "diagnostico": {"campos": {"company.name": {"vazio": True, "procurado_em": ["plataforma"]}}},
+    }
+    anuncio = anuncio.model_copy(
+        update={"campos_estruturados": {**anuncio.campos_estruturados, "_leitura": leitura}}
+    )
+
+    resultado = preparar_publicacao_empregos(
+        empresa=empresa,
+        recrutador=recrutador,
+        anuncio=anuncio,
+        vaga=vaga,
+        politica_fonte=POLITICA_APROVADA,
+    )
+
+    assert resultado.payload is None
+    assert "company.name" in resultado.campos_bloqueadores

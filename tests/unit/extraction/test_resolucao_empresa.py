@@ -244,3 +244,133 @@ def test_rejeita_anuncio_sem_nome_da_empresa() -> None:
 
     else:
         raise AssertionError("era esperado um ErroResolucaoEmpresa")
+
+
+class RepositorioAnunciosMemoriaComLote(RepositorioAnunciosMemoria):
+    """Acrescenta a gravação em lote usada pela resolução em lote."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.lotes = 0
+
+    def salvar_lote(self, anuncios):
+        self.lotes += 1
+        for anuncio in anuncios:
+            self.anuncios[anuncio.id] = anuncio
+
+
+def _anuncio_variado(
+    indice: int,
+    *,
+    nome: str | None,
+    site: str | None,
+    logo: str | None = None,
+    descricao: str | None = None,
+) -> AnuncioVaga:
+    organizacao: dict[str, object] = {"@type": "Organization"}
+    if nome is not None:
+        organizacao["name"] = nome
+    if site is not None:
+        organizacao["sameAs"] = site
+    if logo is not None:
+        organizacao["logo"] = logo
+    if descricao is not None:
+        organizacao["description"] = descricao
+
+    return AnuncioVaga(
+        fonte=Fonte.OUTRA,
+        id_externo=f"vaga-{indice:03d}",
+        url=f"https://empresa.example/jobs/{indice}",
+        titulo_original="Vaga",
+        descricao_original="Descrição da oportunidade.",
+        empresa_original=nome,
+        hash_conteudo="a" * 64,
+        referencia_bruta=f"corpos/{indice}.bin",
+        campos_estruturados={"@type": "JobPosting", "hiringOrganization": organizacao},
+    )
+
+
+def _cenario() -> list[AnuncioVaga]:
+    """Mesma empresa com nomes e dados variados, outra empresa e um anúncio inválido."""
+
+    return [
+        _anuncio_variado(1, nome="Acme", site="https://acme.example/"),
+        _anuncio_variado(
+            2,
+            nome="ACME Ltda",
+            site="https://www.acme.example/",
+            logo="https://acme.example/logo.png",
+        ),
+        _anuncio_variado(3, nome="Acme", site="https://acme.example/", descricao="Fabricante"),
+        _anuncio_variado(4, nome="Beta", site=None),
+        _anuncio_variado(5, nome=None, site=None),
+        _anuncio_variado(6, nome="Beta", site=None, descricao="Serviços"),
+        _anuncio_variado(7, nome="Gama", site="https://gama.example/"),
+    ]
+
+
+def _estado(empresas: RepositorioEmpresasMemoria, anuncios) -> tuple[object, object]:
+    ignorar = {"criado_em", "atualizado_em"}
+    return (
+        {i: e.model_dump(exclude=ignorar) for i, e in empresas.empresas.items()},
+        {a.id_externo: a.empresa_id for a in anuncios.anuncios.values()},
+    )
+
+
+def test_resolucao_em_lote_igual_a_um_por_um() -> None:
+    """Resolver em lote deixa o banco no mesmo estado que resolver um por um."""
+
+    from observatorio_vagas.extraction.resolucao_empresa import (
+        CacheEmpresas,
+        resolver_e_associar_empresas_em_lote,
+    )
+
+    # Uma empresa já existente, que deve ser reutilizada e completada.
+    existente = extrair_empresa_do_anuncio(
+        _anuncio_variado(99, nome="Gama SA", site="https://gama.example/")
+    )
+
+    um_por_um_empresas = RepositorioEmpresasMemoria()
+    um_por_um_empresas.salvar(existente)
+    um_por_um_anuncios = RepositorioAnunciosMemoria()
+    falhas_um_por_um = 0
+    for anuncio in _cenario():
+        try:
+            resolver_e_associar_empresa(
+                anuncio,
+                repositorio_empresas=um_por_um_empresas,
+                repositorio_anuncios=um_por_um_anuncios,
+            )
+        except ErroResolucaoEmpresa:
+            falhas_um_por_um += 1
+
+    lote_empresas = RepositorioEmpresasMemoria()
+    lote_empresas.salvar(existente)
+    gravacoes_iniciais = lote_empresas.gravacoes
+    lote_anuncios = RepositorioAnunciosMemoriaComLote()
+    cache = CacheEmpresas.vazio()
+    resultado = resolver_e_associar_empresas_em_lote(
+        _cenario(),
+        repositorio_empresas=lote_empresas,
+        repositorio_anuncios=lote_anuncios,
+        cache=cache,
+    )
+
+    assert _estado(lote_empresas, lote_anuncios) == _estado(um_por_um_empresas, um_por_um_anuncios)
+    assert len(resultado.falhas) == falhas_um_por_um == 1
+    assert len(resultado.anuncios) == 6
+    assert all(anuncio.empresa_id is not None for anuncio in resultado.anuncios)
+
+    # Uma gravação por empresa (Acme, Beta criadas; Gama completada) e um lote de anúncios.
+    assert lote_empresas.gravacoes - gravacoes_iniciais == 3
+    assert lote_anuncios.lotes == 1
+
+    # Segundo alvo do mesmo lote: o cache evita reconsultar e regravar a empresa.
+    gravacoes = lote_empresas.gravacoes
+    resolver_e_associar_empresas_em_lote(
+        [_anuncio_variado(10, nome="Acme", site="https://acme.example/")],
+        repositorio_empresas=lote_empresas,
+        repositorio_anuncios=lote_anuncios,
+        cache=cache,
+    )
+    assert lote_empresas.gravacoes == gravacoes

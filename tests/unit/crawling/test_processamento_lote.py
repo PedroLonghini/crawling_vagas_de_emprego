@@ -4,10 +4,27 @@ from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
 from scripts import processar_e_salvar_anuncios, processar_lote
 
 from observatorio_vagas.crawling.catalog import carregar_alvos_csv
 from observatorio_vagas.extraction import ResultadoProcessamentoExtracao
+
+
+@pytest.fixture(autouse=True)
+def _extracao_no_mesmo_processo(monkeypatch):
+    """Processos filhos não enxergam os monkeypatches dos testes."""
+
+    monkeypatch.setattr(processar_lote, "_processos_extracao_padrao", lambda: 1)
+
+
+@pytest.fixture(autouse=True)
+def _inventario_isolado_do_data_raw_real(monkeypatch):
+    """Sem isso, testes sem --diretorio-raw liam o histórico real do data/raw."""
+
+    monkeypatch.setattr(
+        processar_lote, "carregar_inventario_bruto_desde", lambda base, *, desde: ()
+    )
 
 
 def _resultado_vazio() -> ResultadoProcessamentoExtracao:
@@ -35,8 +52,8 @@ def test_lote_compartilha_inventario_sem_subprocesso(tmp_path, monkeypatch) -> N
     chamadas = []
     snapshot = ()
 
-    def inventario(base):
-        leituras.append(base)
+    def inventario(base, *, desde):
+        leituras.append((base, desde))
         return snapshot
 
     def extrair(**kwargs):
@@ -46,7 +63,7 @@ def test_lote_compartilha_inventario_sem_subprocesso(tmp_path, monkeypatch) -> N
     def subprocesso_proibido(**kwargs):
         raise AssertionError("prévia não deve abrir subprocessos")
 
-    monkeypatch.setattr(processar_lote, "carregar_inventario_bruto", inventario)
+    monkeypatch.setattr(processar_lote, "carregar_inventario_bruto_desde", inventario)
     monkeypatch.setattr(processar_lote, "executar_extracao", extrair)
     monkeypatch.setattr(processar_lote, "_executar_python", subprocesso_proibido)
     codigo = processar_lote.executar(
@@ -99,6 +116,7 @@ def test_parser_usa_biblioteca_central_por_padrao() -> None:
 
     assert opcoes.catalogo == Path("config/catalogo_fontes.csv")
     assert opcoes.alvos_por_coleta == 200
+    assert opcoes.processos_coleta == processar_lote._processos_coleta_padrao()
     assert opcoes.trabalhadores_posprocessamento == processar_lote._trabalhadores_padrao()
 
 
@@ -350,6 +368,7 @@ def test_coleta_fragmenta_e_recupera_bloco_com_erro(
     falhas = processar_lote._coletar_em_blocos(
         alvos=alvos,
         tamanho_bloco=2,
+        processos=1,
         diretorio_raw=tmp_path / "raw isolado",
     )
 
@@ -362,6 +381,28 @@ def test_coleta_fragmenta_e_recupera_bloco_com_erro(
     assert falhas == {
         "um": 1,
     }
+
+
+def test_distribuicao_por_dominio_nao_separa_fontes_do_mesmo_site(tmp_path: Path) -> None:
+    catalogo = _escrever_catalogo(
+        tmp_path,
+        "primeira,Empresa Um,outra,https://mesmo.example/vagas/1,true,5,somente_coleta",
+        "segunda,Empresa Dois,outra,https://mesmo.example/vagas/2,true,5,somente_coleta",
+        "terceira,Empresa Três,outra,https://outro.example/vagas,true,5,somente_coleta",
+    )
+
+    filas = processar_lote._distribuir_alvos_por_dominio(
+        carregar_alvos_csv(catalogo),
+        processos=3,
+    )
+    filas_por_alvo = {
+        alvo.alvo_id: numero
+        for numero, fila in enumerate(filas)
+        for alvo in fila
+    }
+
+    assert set(filas_por_alvo) == {"primeira", "segunda", "terceira"}
+    assert filas_por_alvo["primeira"] == filas_por_alvo["segunda"]
 
 
 def test_indice_isola_alvos_periodo_e_preserva_ordem():
@@ -398,3 +439,87 @@ def test_crawler_recebe_diretorio_raw_com_espacos(tmp_path, monkeypatch):
     argumentos = chamadas[0]["argumentos"]
     posicao = argumentos.index(f"RAW_STORAGE_DIRECTORY={diretorio}")
     assert argumentos[posicao - 1] == "-s"
+
+
+def test_extracao_paralela_isola_alvos_em_processos(tmp_path: Path, monkeypatch) -> None:
+    """Com vários processos, cada alvo volta com seu código e seu log separado."""
+
+    monkeypatch.setattr(processar_lote, "MINIMO_PAGINAS_PARALELISMO", 0)
+
+    catalogo = _escrever_catalogo(
+        tmp_path,
+        "primeira,Empresa Um,outra,https://um.example/,true,10,somente_coleta",
+        "segunda,Empresa Dois,outra,https://dois.example/,true,10,somente_coleta",
+        "terceira,Empresa Tres,outra,https://tres.example/,true,10,somente_coleta",
+    )
+    alvos = carregar_alvos_csv(catalogo)
+
+    resultados = dict(
+        (alvo.alvo_id, codigo)
+        for alvo, codigo in processar_lote._extrair_alvos(
+            alvos,
+            processos=3,
+            registros_por_alvo={},
+            diretorio_raw=tmp_path / "raw",
+            coletado_desde=datetime(2026, 9, 11, tzinfo=UTC),
+            confirmar=False,
+            publicado_em=None,
+        )
+    )
+
+    # Sem respostas brutas, todos os alvos terminam sem anúncios, cada um uma vez.
+    assert resultados == {
+        "primeira": processar_lote.CODIGO_SEM_ANUNCIOS,
+        "segunda": processar_lote.CODIGO_SEM_ANUNCIOS,
+        "terceira": processar_lote.CODIGO_SEM_ANUNCIOS,
+    }
+
+
+def test_parser_aceita_processos_de_extracao() -> None:
+    opcoes = processar_lote.criar_parser().parse_args(
+        ["--coletado-desde", "2026-09-11T00:00:00+00:00", "--processos-extracao", "6"]
+    )
+
+    assert opcoes.processos_extracao == 6
+
+
+def test_alvo_grande_dividido_em_pedacos_igual_ao_sequencial(tmp_path: Path, monkeypatch, capsys):
+    """O caminho paralelo por pedaços produz o mesmo resumo que o sequencial."""
+
+    from observatorio_vagas.crawling.inventario import carregar_inventario_bruto
+    from tests.unit.extraction.test_processador import _salvar_paginas_variadas
+
+    _salvar_paginas_variadas(tmp_path / "raw")
+    registros = carregar_inventario_bruto(tmp_path / "raw")
+    catalogo = _escrever_catalogo(
+        tmp_path,
+        "empresa_exemplo,Empresa Exemplo,outra,https://empresa.example/,true,10,somente_coleta",
+        "vazio,Empresa Vazia,outra,https://vazia.example/,true,10,somente_coleta",
+    )
+    alvos = carregar_alvos_csv(catalogo)
+
+    def resumo(processos: int) -> tuple[dict[str, int], str]:
+        codigos = dict(
+            (alvo.alvo_id, codigo)
+            for alvo, codigo in processar_lote._extrair_alvos(
+                alvos,
+                processos=processos,
+                registros_por_alvo={"empresa_exemplo": registros, "vazio": ()},
+                diretorio_raw=tmp_path / "raw",
+                coletado_desde=datetime(2026, 9, 1, tzinfo=UTC),
+                confirmar=False,
+                publicado_em=None,
+            )
+        )
+        saida = capsys.readouterr().out
+        inicio = saida.index("Resumo da extração")
+        return codigos, saida[inicio : saida.index("Anúncios preparados", inicio)]
+
+    sequencial = resumo(1)
+    monkeypatch.setattr(processar_lote, "TAMANHO_PEDACO_EXTRACAO", 4)
+    monkeypatch.setattr(processar_lote, "MINIMO_PAGINAS_PARALELISMO", 0)
+    paralelo = resumo(3)
+
+    assert paralelo == sequencial
+    assert sequencial[0] == {"empresa_exemplo": 0, "vazio": processar_lote.CODIGO_SEM_ANUNCIOS}
+    assert "Anúncios únicos: 20" in sequencial[1]

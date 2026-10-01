@@ -45,3 +45,19 @@ def test_data_sem_fuso_vira_so_a_data():
     from observatorio_vagas.extraction.mapeamento_json_ld import _converter_data
 
     assert _converter_data("2027-04-10T23:59") == date(2027, 4, 10)
+
+
+def test_identificador_nunca_corta_o_codigo():
+    from observatorio_vagas.extraction.workday import _identificador
+
+    tenant = "averylongtenantnamethatgoesonandon"
+    a, b = _identificador(tenant, "JR-2026-0001"), _identificador(tenant, "JR-2026-0002")
+
+    assert a != b and len(a) <= 50 and a.endswith("JR-2026-0001")
+
+
+def test_nome_mantem_numeros_legitimos():
+    from observatorio_vagas.extraction.workday import _nome_empresa
+
+    assert _nome_empresa("020 Cisco Systems, Inc.") == "Cisco Systems, Inc."
+    assert _nome_empresa("99 Tecnologia") == "99 Tecnologia"

@@ -676,10 +676,7 @@ def _extrair_parcial(
                 if cache is not None:
                     cache.guardar(registro, analise)
 
-        except (
-            TypeError,
-            ValueError,
-        ) as erro:
+        except Exception as erro:  # um extrator com defeito não derruba o alvo
             falhas.append(
                 FalhaProcessamentoExtracao(
                     referencia=registro.referencia,
@@ -777,10 +774,7 @@ def _extrair_parcial(
                     }
                 )
 
-            except (
-                TypeError,
-                ValueError,
-            ) as erro:
+            except Exception as erro:  # um documento ruim vira falha registrada
                 falhas.append(
                     FalhaProcessamentoExtracao(
                         referencia=registro.referencia,

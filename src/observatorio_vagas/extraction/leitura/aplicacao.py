@@ -79,6 +79,8 @@ def ler_anuncio(
             atributos_plataforma=atributos if isinstance(atributos, dict) else None,
             url_candidatura_html=url_candidatura_html,
             varias_vagas_na_pagina=varias_vagas_na_pagina,
+            # Datas sem ano ("até 10/01") são lidas em relação à coleta.
+            hoje=anuncio.ultima_observacao_em.date(),
         )
     except Exception as erro:  # a leitura nova nunca derruba a extração
         return {"erro": f"{type(erro).__name__}: {erro}"}

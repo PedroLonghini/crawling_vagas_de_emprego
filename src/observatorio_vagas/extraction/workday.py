@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Mapping
+from hashlib import sha256
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -30,8 +31,19 @@ def _nome_empresa(bruto: object) -> str | None:
 
     if not isinstance(bruto, str):
         return None
-    nome = re.sub(r"^\s*\d{1,4}\s+", "", bruto).strip()
+    # Só o padrão do código interno ("020 "); "99 Tecnologia" fica intacto.
+    nome = re.sub(r"^\s*0\d{2}\s+", "", bruto).strip()
     return nome or None
+
+
+def _identificador(tenant: str, codigo: str) -> str:
+    """Até 50 caracteres sem nunca cortar o código da vaga."""
+
+    completo = f"workday-{tenant}-{codigo}"
+    if len(completo) <= 50:
+        return completo
+    curto = f"wd-{sha256(tenant.encode()).hexdigest()[:8]}-{codigo}"
+    return curto if len(curto) <= 50 else f"wd-{sha256(completo.encode()).hexdigest()[:40]}"
 
 
 def extrair_vaga_workday(dados: Mapping[str, Any], *, url: str) -> dict[str, Any] | None:
@@ -43,8 +55,8 @@ def extrair_vaga_workday(dados: Mapping[str, Any], *, url: str) -> dict[str, Any
 
     tenant = urlsplit(url).path.split("/")[3] if len(urlsplit(url).path.split("/")) > 3 else ""
     url_publica = info.get("externalUrl") if isinstance(info.get("externalUrl"), str) else url
-    pais = info.get("country")
-    pais_nome = pais.get("descriptor") if isinstance(pais, Mapping) else None
+    pais = info.get("country") if isinstance(info.get("country"), Mapping) else None
+    pais_nome = pais.get("descriptor") if pais and isinstance(pais.get("descriptor"), str) else None
 
     endereco: dict[str, Any] = {}
     if isinstance(info.get("location"), str):
@@ -57,7 +69,7 @@ def extrair_vaga_workday(dados: Mapping[str, Any], *, url: str) -> dict[str, Any
     documento: dict[str, Any] = {
         "@type": "JobPosting",
         # Estável: tenant + código da requisição na Workday.
-        "identifier": f"workday-{tenant}-{codigo}"[:50],
+        "identifier": _identificador(tenant, str(codigo)),
         "title": titulo.strip(),
         "description": info.get("jobDescription") or "",
         "url": url_publica,
@@ -76,7 +88,10 @@ def extrair_vaga_workday(dados: Mapping[str, Any], *, url: str) -> dict[str, Any
             if info.get(chave) is not None
         },
     }
-    nome = _nome_empresa((dados.get("hiringOrganization") or {}).get("name"))
+    organizacao = dados.get("hiringOrganization")
+    nome = _nome_empresa(
+        organizacao.get("name") if isinstance(organizacao, Mapping) else organizacao
+    )
     if nome:
         documento["hiringOrganization"] = {"@type": "Organization", "name": nome}
     if endereco:

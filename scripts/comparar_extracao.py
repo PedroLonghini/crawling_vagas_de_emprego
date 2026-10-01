@@ -112,6 +112,13 @@ def main() -> int:
     parser.add_argument("--mostrar", type=int, default=5, help="diferenças exibidas")
     opcoes = parser.parse_args()
 
+    if opcoes.desde.tzinfo is None:
+        parser.error("--desde precisa de fuso horário, ex.: 2026-09-30T00:00:00+00:00")
+    if opcoes.acao == "gravar" and opcoes.saida is None:
+        parser.error("gravar exige --saida")
+    if opcoes.acao == "comparar" and opcoes.referencia is None:
+        parser.error("comparar exige --referencia")
+
     resultados = _executar(opcoes.diretorio_raw, opcoes.desde, opcoes.processos)
 
     if opcoes.acao == "gravar":

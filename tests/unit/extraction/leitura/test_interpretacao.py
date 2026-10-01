@@ -177,3 +177,73 @@ def test_cnpj_invalido_e_interface_estrita():
         limpar_descricao("Elaborar o menu do restaurante\nMenu\n✕")
         == "Elaborar o menu do restaurante"
     )
+
+
+DESCRICAO = (
+    "Atividades do dia a dia, responsabilidades da função e requisitos obrigatórios para o cargo."
+)
+
+
+def _pagina(*postings):
+    html = f'<html><body><script type="application/ld+json">{json.dumps(list(postings))}</script></body></html>'
+    return montar_inventario(html.encode(), url="https://x.com.br/vagas")
+
+
+def test_listagem_com_um_jobposting_alheio_nao_empresta_dados():
+    """Revisão 2, caso 1a: um JobPosting só, mas de outra vaga da listagem."""
+
+    inv = _pagina(
+        {
+            "@type": "JobPosting",
+            "identifier": "A1",
+            "title": "Vaga A",
+            "hiringOrganization": {"name": "Empresa A"},
+            "validThrough": "2026-01-01",
+            "description": DESCRICAO,
+        }
+    )
+    leitura = ler_vaga(
+        inv,
+        titulo="Vaga Z",
+        id_externo="Z9",
+        url_vaga="https://x.com.br/vagas",
+        documento={"identifier": "Z9", "title": "Vaga Z", "description": DESCRICAO},
+        varias_vagas_na_pagina=True,
+    )
+
+    assert leitura.campos["company"].get("name") != "Empresa A"
+    assert "expireAt" not in leitura.campos
+
+
+def test_mesma_url_em_varios_jobpostings_casa_pelo_identificador():
+    """Revisão 2, caso 1b: todos com a URL da listagem, identificadores diferentes."""
+
+    comum = {"@type": "JobPosting", "url": "https://x.com.br/vagas", "description": DESCRICAO}
+    inv = _pagina(
+        {**comum, "identifier": "1", "title": "A", "hiringOrganization": {"name": "Empresa A"}},
+        {**comum, "identifier": "2", "title": "B", "hiringOrganization": {"name": "Empresa B"}},
+    )
+    leitura = ler_vaga(
+        inv,
+        titulo="B",
+        id_externo="2",
+        url_vaga="https://x.com.br/vagas",
+        documento={"identifier": "2", "url": "https://x.com.br/vagas", "title": "B"},
+        varias_vagas_na_pagina=True,
+    )
+
+    assert leitura.campos["company"]["name"] == "Empresa B"
+
+
+def test_expiracao_vem_do_documento_em_fonte_json():
+    """Revisão 2, caso 2: Workday/CKAN trazem validThrough no documento, não no HTML."""
+
+    leitura = ler_vaga(
+        InventarioPagina(url="https://x.myworkdayjobs.com/wday/cxs/x/y/job/z"),
+        titulo="Analista",
+        id_externo="workday-x-1",
+        url_vaga="https://x.myworkdayjobs.com/wday/cxs/x/y/job/z",
+        documento={"validThrough": "2026-10-30", "description": DESCRICAO},
+    )
+
+    assert leitura.campos["expireAt"] == "2026-10-30"

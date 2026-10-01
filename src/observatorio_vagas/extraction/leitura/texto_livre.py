@@ -353,6 +353,9 @@ def interpretar_expiracao(texto: str, origem: str, *, referencia: date) -> Leitu
         )
         if sem_ano and (referencia - data).days > 60:
             data = date(ano + 1, mes, dia)
+        elif sem_ano and (data - referencia).days > 300:
+            # "até 10/12" lido em janeiro é do dezembro anterior (já venceu).
+            data = date(ano - 1, mes, dia)
     except ValueError:
         return None
 

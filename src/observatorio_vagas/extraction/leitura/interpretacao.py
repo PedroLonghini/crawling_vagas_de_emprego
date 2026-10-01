@@ -65,6 +65,9 @@ def html_para_texto(valor: str | None) -> str | None:
         return None
     # O parser já decodifica entidades; decodificar antes transformaria
     # "&lt; 3000" em tag e apagaria o texto.
+    if "<" not in valor and "&lt;" in valor:
+        # HTML escapado ("&lt;p&gt;..."): desfaz o escape e lê como HTML.
+        valor = html_mod.unescape(valor)
     return limpar_texto(_limpar_html_formatado(valor) if "<" in valor else valor)
 
 
@@ -464,10 +467,16 @@ def _salario_jsonld(inv: InventarioPagina) -> Leitura | Indefinido | None:
 
 
 def _expiracao_jsonld(inv: InventarioPagina, plataforma: str | None) -> Leitura | Indefinido | None:
-    validade = _jsonld(inv, "validThrough")
+    return _expiracao(_jsonld(inv, "validThrough"), _jsonld(inv, "datePosted"), plataforma)
+
+
+def _expiracao(
+    validade: Any, publicada: Any, plataforma: str | None
+) -> Leitura | Indefinido | None:
+    """Data de validade da fonte; recusa a calculada pela plataforma (Quickin +90)."""
+
     if not validade:
         return None
-    publicada = _jsonld(inv, "datePosted")
     try:
         if publicada and plataforma == "quickin":
             dias = (
@@ -516,28 +525,49 @@ def cnpj_valido(numero: str) -> bool:
 
 
 def _posting_da_vaga(
-    postings: list[dict[str, Any]], *, documento: dict[str, Any], titulo: str
+    postings: list[dict[str, Any]],
+    *,
+    documento: dict[str, Any],
+    titulo: str,
+    varias_vagas: bool = False,
 ) -> list[dict[str, Any]]:
-    """Só o JobPosting desta vaga; numa página com várias, nenhum que não bata."""
+    """Só o JobPosting desta vaga.
 
-    if len(postings) <= 1:
+    Numa página com uma vaga e um JobPosting, ele é dela. Nos outros casos,
+    precisa casar com o anúncio por identificador, depois URL, depois título;
+    se nada casar, ou se mais de um casar, nenhum é usado.
+    """
+
+    if not postings:
+        return []
+    if len(postings) == 1 and not varias_vagas:
         return postings
 
-    def chaves(item: dict[str, Any]) -> set[str]:
-        identificador = item.get("identifier")
-        if isinstance(identificador, dict):
-            identificador = identificador.get("value") or identificador.get("@id")
-        return {str(v).strip().casefold() for v in (item.get("url"), identificador) if v}
+    def identificador(item: dict[str, Any]) -> str:
+        valor = item.get("identifier")
+        if isinstance(valor, dict):
+            valor = valor.get("value") or valor.get("@id")
+        return str(valor or "").strip().casefold()
 
-    alvo = chaves(documento)
-    iguais = [item for item in postings if alvo & chaves(item)]
-    if not iguais:
-        iguais = [
-            item
-            for item in postings
-            if str(item.get("title", "")).strip().casefold() == titulo.strip().casefold()
-        ]
-    return iguais[:1]
+    def url(item: dict[str, Any]) -> str:
+        return str(item.get("url") or "").strip().casefold().rstrip("/")
+
+    def nome(item: dict[str, Any]) -> str:
+        return str(item.get("title") or "").strip().casefold()
+
+    for chave, alvo in (
+        (identificador, identificador(documento)),
+        (url, url(documento)),
+        (nome, (documento.get("title") or titulo).strip().casefold()),
+    ):
+        if not alvo:
+            continue
+        iguais = [item for item in postings if chave(item) == alvo]
+        if len(iguais) == 1:
+            return iguais
+        if len(iguais) > 1:
+            continue
+    return []
 
 
 def _nome_empresa(bruto: str) -> str:
@@ -574,7 +604,9 @@ def ler_vaga(
 
     hoje = hoje or date.today()
     documento = documento or {}
-    postings = _posting_da_vaga(inv.json_ld, documento=documento, titulo=titulo)
+    postings = _posting_da_vaga(
+        inv.json_ld, documento=documento, titulo=titulo, varias_vagas=varias_vagas_na_pagina
+    )
     if varias_vagas_na_pagina or len(inv.json_ld) > 1:
         inv = replace(
             inv,
@@ -984,6 +1016,13 @@ def ler_vaga(
         [
             ("plataforma", plat("expireAt")),
             ("json_ld.validThrough", lambda: _expiracao_jsonld(inv, plataforma)),
+            # Fontes JSON (Workday, CKAN, Querido Diário...) trazem a data no documento.
+            (
+                "documento.validThrough",
+                lambda: _expiracao(
+                    documento.get("validThrough"), documento.get("datePosted"), plataforma
+                ),
+            ),
             (
                 "texto_livre",
                 lambda: interpretar_expiracao(texto_vaga or "", "texto", referencia=hoje),

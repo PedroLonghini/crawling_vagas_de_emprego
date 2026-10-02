@@ -1,5 +1,9 @@
 """Configurações seguras do crawler Scrapy."""
 
+from observatorio_vagas.crawling.ritmo_sites import carregar_ritmo
+
+_RITMO = carregar_ritmo()
+
 # Nome interno do projeto dentro do Scrapy.
 BOT_NAME = "observatorio_vagas"
 
@@ -55,64 +59,18 @@ TELNETCONSOLE_ENABLED = False
 # usa principalmente conexões em espera, não processamento contínuo de CPU.
 CONCURRENT_REQUESTS = 180
 
-# Duas requisições simultâneas por domínio, no máximo (ritmo de ~2 por
-# segundo). Os portais grandes têm slots próprios mais abaixo.
-CONCURRENT_REQUESTS_PER_DOMAIN = 2
+# Padrão para os sites que não aparecem em config/ritmo_sites.csv (linha "*").
+CONCURRENT_REQUESTS_PER_DOMAIN = _RITMO.padrao.simultaneas
 
 # Espera mínima entre requisições para o mesmo domínio.
-DOWNLOAD_DELAY = 0.5
+DOWNLOAD_DELAY = _RITMO.padrao.intervalo
 
 # Varia levemente o intervalo para evitar rajadas regulares.
 RANDOMIZE_DOWNLOAD_DELAY = True
 
-# As fontes Abler aprovadas possuem uma listagem própria e adaptador dedicado;
-# não precisam de sitemap. Mantemos uma aceleração moderada e exclusiva para
-# esse domínio, sem mudar o limite conservador dos demais sites.
-DOWNLOAD_SLOTS = {
-    "ats.abler.com.br": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    # APIs públicas de ATS já possuem adaptadores próprios: nelas a resposta
-    # é JSON pequeno, sem renderização de navegador. Acelerar só esses slots
-    # preserva o comportamento prudente para sites de empresas individuais.
-    "apigw.solides.com.br": {
-        "concurrency": 3,
-        "delay": 0.35,
-        "randomize_delay": True,
-    },
-    "platform.senior.com.br": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    "jobs.lever.co": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    "jobs.quickin.io": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    # Portais que dominam o volume do lote diário: no lote de 1.000 fontes,
-    # empregandobrasil.com.br e emploive.com somaram 80% das 73 mil páginas.
-    # Sonda de 2026-10-02 (10 páginas por nível): com 2 e 4 requisições não
-    # houve 429, 403 nem 5xx, e o robots.txt não define Crawl-delay. Ficamos
-    # em 3 requisições; os demais sites seguem em 2.
-    "empregandobrasil.com.br": {
-        "concurrency": 3,
-        "delay": 0.35,
-        "randomize_delay": True,
-    },
-    "emploive.com": {
-        "concurrency": 3,
-        "delay": 0.35,
-        "randomize_delay": True,
-    },
-}
+# Ritmo por site: vem de config/ritmo_sites.csv (um arquivo para editar à mão).
+# Os sites listados lá usam um slot próprio e ficam fora do ajuste automático.
+DOWNLOAD_SLOTS = _RITMO.slots_scrapy()
 
 
 # AutoThrottle adapta a velocidade de acordo com

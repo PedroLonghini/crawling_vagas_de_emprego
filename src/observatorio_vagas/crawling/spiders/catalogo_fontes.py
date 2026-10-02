@@ -39,6 +39,7 @@ from observatorio_vagas.crawling.request_factory import (
     criar_requisicao_inicial,
     criar_requisicoes_detalhe,
 )
+from observatorio_vagas.crawling.ritmo_sites import carregar_ritmo
 from observatorio_vagas.crawling.sitemap import (
     criar_url_sitemap_padrao,
     descobrir_urls_sitemap,
@@ -100,6 +101,7 @@ class CatalogoFontesSpider(Spider):
                 "observatorio_vagas.crawling.janela_publicacao."
                 "EncerramentoPorIdadeDownloaderMiddleware"
             ): 70,
+            "observatorio_vagas.crawling.ritmo_sites.RitmoPorSiteDownloaderMiddleware": 60,
             ("observatorio_vagas.crawling.middlewares.BarreiraPoliticaDownloaderMiddleware"): 75,
             ("observatorio_vagas.crawling.javascript.RenderizacaoJavaScriptMiddleware"): 540,
         },
@@ -108,7 +110,11 @@ class CatalogoFontesSpider(Spider):
         # O limite é por alvo. A execução direta não deve parar o catálogo
         # inteiro após apenas 100 respostas (o script de lote aplica sua trava).
         "CLOSESPIDER_PAGECOUNT": 0,
+        # Ritmo do CSV (config/ritmo_sites.csv) mais as exceções fixas abaixo,
+        # que têm prioridade. O dicionário do spider SUBSTITUI o do projeto,
+        # por isso o CSV é mesclado aqui.
         "DOWNLOAD_SLOTS": {
+            **carregar_ritmo().slots_scrapy(),
             "dados.es.gov.br": {"delay": 10, "concurrency": 1, "randomize_delay": False},
             "dados.ufvjm.edu.br": {"delay": 10, "concurrency": 1, "randomize_delay": False},
             "api.queridodiario.org.br": {"delay": 1.1, "concurrency": 1, "randomize_delay": False},

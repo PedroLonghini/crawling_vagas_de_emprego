@@ -1,0 +1,17 @@
+# RITMO DE REQUISICOES POR SITE  (abra esta tabela no VS Code e edite)
+#
+# intervalo_segundos      : espera minima entre uma requisicao e a proxima  ->  ritmo maximo = 1 / intervalo
+#                           (0.5 = 2 por segundo; 0.35 = ~2,9 por segundo; 1 = 1 por segundo)
+# requisicoes_simultaneas : quantas ficam em andamento ao mesmo tempo (1 a 8); so ajuda se o site responde devagar
+#
+# A linha "*" vale para todo site que nao aparece aqui. Subir muito um site
+# arrisca bloqueio do nosso IP: confirme antes com scripts/sonda_ritmo_site.py.
+dominio,requisicoes_simultaneas,intervalo_segundos,observacao
+*,2,0.5,padrao para todos os sites (2 por segundo)
+empregandobrasil.com.br,3,0.35,maior fonte do lote; 2 e 4 req/s sem erro na sonda de 2026-10-02
+emploive.com,3,0.35,sonda: 6 req/s sem erro (25 paginas por nivel)
+ats.abler.com.br,2,0.5,API de ATS
+apigw.solides.com.br,3,0.35,API de ATS
+platform.senior.com.br,2,0.5,API de ATS
+jobs.lever.co,2,0.5,API de ATS
+jobs.quickin.io,2,0.5,API de ATS

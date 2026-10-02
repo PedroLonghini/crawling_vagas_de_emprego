@@ -126,7 +126,7 @@ def _exportar_urls_conhecidas(destino: Path) -> Path | None:
         return None
 
     destino.parent.mkdir(parents=True, exist_ok=True)
-    destino.write_text(os.linesep.join(sorted(urls)), encoding="utf-8")
+    destino.write_text("\n".join(sorted(urls)), encoding="utf-8")
     print(f"Vagas já gravadas no MongoDB (descartadas se reaparecerem): {len(urls)}")
     return destino
 

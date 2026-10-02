@@ -25,6 +25,83 @@ ulimit -n 10240                     # arquivos abertos; repita em cada terminal
   `python scripts/acompanhar_mongo.py --uma-vez`
 - Espaço em disco: reserve ao menos 30 GB livres (as páginas novas ficam comprimidas).
 
+### Túnel SSH para o MongoDB
+
+O `.env` aponta para `127.0.0.1:27019`; o túnel leva essa porta local até o
+MongoDB da VM (porta 27017 lá). No Windows ele é:
+
+```
+ssh -p 2222 -N -L 27019:127.0.0.1:27017 longhini@<servidor>
+```
+
+No Mac, a forma mais estável é um apelido em `~/.ssh/config`:
+
+```
+Host mongo-vm
+    HostName <servidor>
+    Port 2222
+    User longhini
+    IdentityFile ~/.ssh/id_ed25519
+    LocalForward 27019 127.0.0.1:27017
+    ServerAliveInterval 30
+    ServerAliveCountMax 3
+    ExitOnForwardFailure yes
+```
+
+Chave de acesso: gere uma nova no Mac (`ssh-keygen -t ed25519`) e peça para
+adicionar `~/.ssh/id_ed25519.pub` ao `authorized_keys` do usuário na VM, ou copie
+a chave que você usa no Windows (por AirDrop ou pendrive, nunca por e-mail ou git)
+e rode `chmod 600 ~/.ssh/id_ed25519`. Teste uma vez com `ssh mongo-vm` para aceitar
+o host.
+
+Abrir, conferir e fechar:
+
+```bash
+ssh -f -N mongo-vm                                  # abre em segundo plano
+lsof -nP -iTCP:27019 -sTCP:LISTEN                   # deve listar o ssh
+python scripts/acompanhar_mongo.py --uma-vez        # deve mostrar as contagens
+pkill -f "ssh -f -N mongo-vm"                       # fecha (ou: pkill -f autossh)
+```
+
+Para um teste de horas, prefira `brew install autossh` e
+`autossh -M 0 -f -N mongo-vm`: ele religa o túnel se a conexão cair. Se o túnel cair
+no meio, as gravações no MongoDB falham, e o lote registra o erro.
+
+### As 10 mil fontes
+
+Mantenha a lista fora do git (ela pode ser licenciada) e use o script que valida,
+normaliza e remove duplicadas:
+
+```bash
+mkdir -p ~/urls && cp /onde/estiver/urls_10mil.txt ~/urls/        # TXT (uma URL por linha) ou CSV com a coluna url
+python scripts/preparar_lote_urls_licenciadas.py \
+  --entrada ~/urls/urls_10mil.txt --diretorio-saida config/lote_10mil
+cat config/lote_10mil/relatorio_importacao.json | head -40         # quantas entraram e por que outras saíram
+```
+
+Isso gera `config/lote_10mil/catalogo_fontes.csv` e `fontes_autorizadas.csv`; use o
+primeiro como `--catalogo`. O script marca todas as URLs como autorizadas para
+publicação e não confere licença. Isso é decisão sua.
+
+Antes do teste grande, confira a composição do catálogo:
+
+```bash
+python scripts/ritmo_sites.py listar
+python - <<'EOF'
+import collections, csv
+from urllib.parse import urlsplit
+c = collections.Counter(urlsplit(l["url"]).hostname for l in csv.DictReader(open("config/lote_10mil/catalogo_fontes.csv")))
+print(len(c), "domínios; maiores:", c.most_common(10))
+EOF
+```
+
+Se um domínio tiver centenas de fontes, é ele que vai decidir o tempo da coleta
+(ritmo do site × páginas); ajuste a linha dele em `config/ritmo_sites.csv` só depois
+de medir (`python scripts/ritmo_sites.py sondar <site>`).
+
+Para um ensaio, use um pedaço do catálogo: `head -n 1001 config/lote_10mil/catalogo_fontes.csv > config/catalogo_1000_do_10mil.csv`
+(a primeira linha é o cabeçalho `url`).
+
 ## 2. Teste de disco (2 minutos)
 
 ```bash

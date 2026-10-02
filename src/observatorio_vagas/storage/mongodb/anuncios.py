@@ -377,6 +377,9 @@ class RepositorioAnunciosMongoDB:
                     DESCENDING,
                 )
                 .limit(limite)
+                # Alvos grandes (milhares de anúncios com descrição) estouram o
+                # limite de 100 MB da ordenação em memória do MongoDB.
+                .allow_disk_use(True)
             )
 
             return [

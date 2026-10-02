@@ -46,6 +46,9 @@ dependencies = [
 [project.optional-dependencies]
 javascript = ["playwright>=1.48,<2"]
 
+# Medição de tempo e recursos do lote (scripts/medicao_completa.py).
+medicao = ["psutil>=5.9,<8"]
+
 # Ferramentas utilizadas durante o desenvolvimento.
 dev = [
     # Executa testes.

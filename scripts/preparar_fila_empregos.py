@@ -26,7 +26,7 @@ from observatorio_vagas.storage.mongodb import (
     RepositorioVagasMongoDB,
 )
 
-LIMITE_CONSULTA_POR_ALVO = 1000
+LIMITE_CONSULTA_POR_ALVO = 10000
 
 
 def criar_parser() -> argparse.ArgumentParser:
@@ -57,7 +57,7 @@ def criar_parser() -> argparse.ArgumentParser:
         "--limite",
         type=int,
         default=100,
-        help="quantidade máxima de anúncios avaliados (padrão: 100; máximo: 10000)",
+        help="quantidade máxima de anúncios avaliados (padrão: 100; máximo: 50000)",
     )
     datas = parser.add_mutually_exclusive_group()
     datas.add_argument(
@@ -289,8 +289,8 @@ def executar(argumentos: list[str] | None = None) -> int:
 
     opcoes = criar_parser().parse_args(argumentos)
 
-    if opcoes.limite < 1 or opcoes.limite > 10000:
-        print("ERRO: limite deve estar entre 1 e 10000")
+    if opcoes.limite < 1 or opcoes.limite > 50000:
+        print("ERRO: limite deve estar entre 1 e 50000")
         return 2
 
     publicado_em = ontem_brasilia() if opcoes.publicados_ontem else opcoes.publicados_em

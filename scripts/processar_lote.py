@@ -265,9 +265,7 @@ def criar_parser() -> argparse.ArgumentParser:
     datas.add_argument(
         "--publicados-ontem", action="store_true", help="publicados ontem em Brasília"
     )
-    datas.add_argument(
-        "--publicados-hoje", action="store_true", help="publicados hoje em Brasília"
-    )
+    datas.add_argument("--publicados-hoje", action="store_true", help="publicados hoje em Brasília")
     datas.add_argument(
         "--publicados-em", type=date.fromisoformat, help="data de publicação YYYY-MM-DD"
     )
@@ -823,12 +821,14 @@ def _extrair_alvos(
             yield alvo, codigo
         return
 
-    # Os maiores primeiro: assim nenhum alvo grande sobra sozinho no fim,
-    # com os demais núcleos parados esperando por ele.
+    # Os menores primeiro: terminam logo e já são gravados no MongoDB, em vez
+    # de esperar horas atrás das centenas de pedaços dos alvos gigantes (no
+    # lote de 1.000 fontes, um só site tinha 66% das páginas e nada era
+    # gravado até ele acabar). Como os alvos grandes são cortados em pedaços de
+    # 100 páginas, deixá-los por último quase não cria sobra no fim.
     ordenados = sorted(
         alvos,
         key=lambda alvo: len(registros_por_alvo.get(alvo.alvo_id, ())),
-        reverse=True,
     )
 
     print()
@@ -1223,9 +1223,7 @@ def executar(
             alvos=executaveis,
             tamanho_bloco=opcoes.alvos_por_coleta,
             processos=opcoes.processos_coleta,
-            tempo_maximo=(
-                opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None
-            ),
+            tempo_maximo=(opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None),
             **(
                 {"limite_anuncios": opcoes.limite_anuncios}
                 if opcoes.limite_anuncios is not None
@@ -1372,8 +1370,12 @@ def _processar_alvos(
     anuncios_concluidos = 0
     anuncios_com_falha = 0
 
+    alvos_a_extrair = tuple(alvo for alvo in executaveis if alvo.alvo_id not in falhas_coleta)
+
+    alvos_processados = 0
+
     for alvo, codigo_extracao in _extrair_alvos(
-        tuple(alvo for alvo in executaveis if alvo.alvo_id not in falhas_coleta),
+        alvos_a_extrair,
         processos=opcoes.processos_extracao,
         registros_por_alvo=registros_por_alvo,
         diretorio_raw=diretorio_raw,
@@ -1388,6 +1390,11 @@ def _processar_alvos(
             else None
         ),
     ):
+        alvos_processados += 1
+        print()
+        print(f"Progresso: alvo {alvos_processados}/{len(alvos_a_extrair)} ({alvo.alvo_id})")
+        sys.stdout.flush()
+
         if codigo_extracao == CODIGO_SEM_ANUNCIOS:
             alvos_sem_anuncios += 1
             resultados_alvos.append(

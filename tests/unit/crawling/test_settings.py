@@ -11,8 +11,8 @@ def test_crawler_respeita_robots_txt() -> None:
 
 def test_paralelismo_aumenta_somente_entre_dominios() -> None:
     assert settings.CONCURRENT_REQUESTS == 180
-    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
-    assert settings.DOWNLOAD_DELAY >= 1.0
+    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2
+    assert settings.DOWNLOAD_DELAY >= 0.5
 
 
 def test_abler_autorizado_tem_fila_moderadamente_mais_rapida() -> None:
@@ -31,17 +31,17 @@ def test_apis_de_ats_possuem_slots_rapidos_e_isolados() -> None:
 
 
 def test_piloto_limita_requisicoes_por_dominio() -> None:
-    """O piloto deve fazer somente uma requisição simultânea por domínio."""
+    """Sites comuns recebem no máximo duas requisições simultâneas."""
 
-    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 1
-    assert settings.DOWNLOAD_DELAY >= 1.0
+    assert settings.CONCURRENT_REQUESTS_PER_DOMAIN == 2
+    assert settings.DOWNLOAD_DELAY >= 0.5
 
 
 def test_autothrottle_esta_ativado() -> None:
     """A velocidade deve se adaptar ao tempo de resposta do site."""
 
     assert settings.AUTOTHROTTLE_ENABLED is True
-    assert settings.AUTOTHROTTLE_TARGET_CONCURRENCY <= 1.0
+    assert settings.AUTOTHROTTLE_TARGET_CONCURRENCY <= 2.0
     assert settings.AUTOTHROTTLE_MAX_DELAY >= settings.AUTOTHROTTLE_START_DELAY
 
 

@@ -55,12 +55,12 @@ TELNETCONSOLE_ENABLED = False
 # usa principalmente conexões em espera, não processamento contínuo de CPU.
 CONCURRENT_REQUESTS = 180
 
-# Durante o piloto, apenas uma requisição simultânea
-# será enviada para cada domínio.
-CONCURRENT_REQUESTS_PER_DOMAIN = 1
+# Duas requisições simultâneas por domínio, no máximo (ritmo de ~2 por
+# segundo). Os portais grandes têm slots próprios mais abaixo.
+CONCURRENT_REQUESTS_PER_DOMAIN = 2
 
 # Espera mínima entre requisições para o mesmo domínio.
-DOWNLOAD_DELAY = 1.0
+DOWNLOAD_DELAY = 0.5
 
 # Varia levemente o intervalo para evitar rajadas regulares.
 RANDOMIZE_DOWNLOAD_DELAY = True
@@ -101,7 +101,7 @@ DOWNLOAD_SLOTS = {
     # empregandobrasil.com.br e emploive.com somaram 80% das 73 mil páginas.
     # Sonda de 2026-10-02 (10 páginas por nível): com 2 e 4 requisições não
     # houve 429, 403 nem 5xx, e o robots.txt não define Crawl-delay. Ficamos
-    # em 3 requisições; os demais sites seguem em 1 por segundo.
+    # em 3 requisições; os demais sites seguem em 2.
     "empregandobrasil.com.br": {
         "concurrency": 3,
         "delay": 0.35,
@@ -125,10 +125,10 @@ AUTOTHROTTLE_START_DELAY = 1.0
 # Se o site estiver lento, o intervalo pode chegar a 30 segundos.
 AUTOTHROTTLE_MAX_DELAY = 30.0
 
-# Busca manter aproximadamente uma requisição por domínio.
+# Busca manter aproximadamente duas requisições por domínio.
 # Mantém uma média prudente por domínio; acelerações específicas continuam
 # configuradas por slot e não devem transformar a coleta em rajadas.
-AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 2.0
 
 # Não mostra os cálculos internos do AutoThrottle nos logs normais.
 AUTOTHROTTLE_DEBUG = False

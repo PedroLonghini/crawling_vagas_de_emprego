@@ -14,6 +14,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 from zoneinfo import ZoneInfo
 
@@ -29,6 +30,11 @@ FUSO = ZoneInfo("America/Sao_Paulo")
 # Vagas antigas seguidas necessárias para encerrar a fonte. Um único destaque
 # ou vaga fixada no meio da listagem não pode encerrar a coleta sozinho.
 VELHAS_SEGUIDAS_PARA_ENCERRAR = 3
+
+# Fonte cujas 3 primeiras vagas lidas não trazem data é tratada como "sem data"
+# e lê apenas as 3 primeiras páginas de listagem (as mais novas).
+LEITURAS_SEM_DATA = 3
+LISTAGENS_SEM_DATA = 3
 
 _ISO_DATA = re.compile(r"\d{4}-\d{2}-\d{2}")
 _BR_DATA = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
@@ -145,19 +151,45 @@ def esta_velha(
 
 @dataclass(slots=True)
 class JanelaPublicacao:
-    """Controla, por fonte, quando as vagas velhas encerram a coleta."""
+    """Controla, por fonte, quando a coleta deve parar.
 
-    horas: int
+    Duas regras encerram uma fonte:
+    - com ``horas``: vagas velhas seguidas (a data está na página);
+    - sem data na página: a primeira vaga que já está gravada no MongoDB.
+    Fontes sem data também ficam limitadas às primeiras listagens.
+    """
+
+    horas: int | None = None
     velhas_seguidas_para_encerrar: int = VELHAS_SEGUIDAS_PARA_ENCERRAR
+    leituras_sem_data_para_classificar: int = LEITURAS_SEM_DATA
+    listagens_sem_data: int = LISTAGENS_SEM_DATA
     _seguidas: dict[str, int] = field(default_factory=dict)
     _encerradas: set[str] = field(default_factory=set)
+    _sem_data: dict[str, int] = field(default_factory=dict)
+    _com_data: set[str] = field(default_factory=set)
 
     def registrar(
-        self, alvo_id: str, data: DataPublicacao | None, *, agora: datetime | None = None
+        self,
+        alvo_id: str,
+        data: DataPublicacao | None,
+        *,
+        conhecida: bool = False,
+        agora: datetime | None = None,
     ) -> bool:
-        """Registra uma vaga lida; devolve ``True`` se ela é velha."""
+        """Registra uma vaga lida; devolve ``True`` se ela deve ser descartada."""
 
         if data is None:
+            self._sem_data[alvo_id] = self._sem_data.get(alvo_id, 0) + 1
+            if conhecida:
+                # Sem data, a única pista de que acabaram as novas é já
+                # termos esta vaga: o resto da fonte é antigo.
+                self._encerradas.add(alvo_id)
+                return True
+            return False
+
+        self._com_data.add(alvo_id)
+
+        if self.horas is None:
             return False
 
         if not esta_velha(data, horas=self.horas, agora=agora):
@@ -169,6 +201,14 @@ class JanelaPublicacao:
             self._encerradas.add(alvo_id)
         return True
 
+    def sem_data(self, alvo_id: str) -> bool:
+        """A fonte nunca mostrou data nas primeiras vagas lidas?"""
+
+        return (
+            alvo_id not in self._com_data
+            and self._sem_data.get(alvo_id, 0) >= self.leituras_sem_data_para_classificar
+        )
+
     def encerrada(self, alvo_id: str) -> bool:
         return alvo_id in self._encerradas
 
@@ -177,8 +217,19 @@ class JanelaPublicacao:
         return frozenset(self._encerradas)
 
 
+def carregar_urls_conhecidas(caminho: Path | None) -> frozenset[str]:
+    """Lê o arquivo (uma URL por linha) com as vagas já gravadas no MongoDB."""
+
+    if caminho is None or not caminho.exists():
+        return frozenset()
+
+    return frozenset(
+        linha.strip() for linha in caminho.read_text(encoding="utf-8").splitlines() if linha.strip()
+    )
+
+
 class EncerramentoPorIdadeDownloaderMiddleware:
-    """Descarta o que sobrou na fila de uma fonte já encerrada pela janela."""
+    """Descarta o que sobrou na fila de uma fonte já encerrada ou saturada."""
 
     def __init__(self, crawler: Crawler) -> None:
         self._crawler = crawler
@@ -192,6 +243,21 @@ class EncerramentoPorIdadeDownloaderMiddleware:
         janela: JanelaPublicacao | None = getattr(spider, "janela_publicacao", None)
         alvo_id = request.meta.get("observatorio_alvo_id")
 
-        if janela is not None and isinstance(alvo_id, str) and janela.encerrada(alvo_id):
+        if janela is None or not isinstance(alvo_id, str):
+            return None
+
+        if janela.encerrada(alvo_id):
             self._crawler.stats.inc_value("observatorio/janela/requisicoes_descartadas")
-            raise IgnoreRequest("fonte encerrada: vagas fora da janela de publicação")
+            raise IgnoreRequest("fonte encerrada: o restante já é antigo ou conhecido")
+
+        numero_pagina = request.meta.get("observatorio_numero_pagina")
+        if (
+            janela.sem_data(alvo_id)
+            and request.meta.get("observatorio_tipo_pagina") == "inicial"
+            and isinstance(numero_pagina, int)
+            and numero_pagina > janela.listagens_sem_data
+        ):
+            self._crawler.stats.inc_value("observatorio/janela/listagens_sem_data_descartadas")
+            raise IgnoreRequest("fonte sem data: só as primeiras listagens são lidas")
+
+        return None

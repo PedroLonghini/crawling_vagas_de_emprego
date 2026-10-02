@@ -23,6 +23,7 @@ from observatorio_vagas.crawling.estado_incremental import EstadoIncrementalLoca
 from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregaticio
 from observatorio_vagas.crawling.janela_publicacao import (
     JanelaPublicacao,
+    carregar_urls_conhecidas,
     extrair_data_publicacao,
 )
 from observatorio_vagas.crawling.paginacao import descobrir_paginacao, eh_link_listagem
@@ -129,6 +130,7 @@ class CatalogoFontesSpider(Spider):
         reler_detalhes_conhecidos: str | bool = False,
         usar_agendamento_inteligente: str | bool = True,
         janela_horas: str | int | None = None,
+        urls_conhecidas: str | None = None,
         *args: Any,
         **kwargs: Any,
     ) -> None:
@@ -158,12 +160,16 @@ class CatalogoFontesSpider(Spider):
             "nao",
             "não",
         }
-        # Com janela, a fonte para quando as vagas lidas já passaram dela.
-        self.janela_publicacao = (
-            JanelaPublicacao(horas=int(janela_horas)) if janela_horas not in (None, "") else None
-        )
-        if self.janela_publicacao is not None and self.janela_publicacao.horas < 1:
+        # Com janela, a fonte para quando as vagas lidas já passaram dela. Sem
+        # data na página, ela para na primeira vaga já gravada no MongoDB e lê
+        # só as primeiras listagens.
+        horas = int(janela_horas) if janela_horas not in (None, "") else None
+        if horas is not None and horas < 1:
             raise ValueError("janela_horas deve ser pelo menos 1")
+        self.janela_publicacao = JanelaPublicacao(horas=horas)
+        self.urls_conhecidas = carregar_urls_conhecidas(
+            Path(urls_conhecidas) if urls_conhecidas else None
+        )
         self.resultados_download: dict[str, dict[str, dict[str, Any]]] = {}
         self.detalhes_descobertos: dict[str, set[str]] = {}
         if self.limite_anuncios is not None and not 1 <= self.limite_anuncios <= 10000:
@@ -294,7 +300,7 @@ class CatalogoFontesSpider(Spider):
             navegacao = self.navegacao_pendente.get(alvo_id, {})
             if resposta is None or not (pendentes or navegacao):
                 continue
-            if self.janela_publicacao is not None and self.janela_publicacao.encerrada(alvo_id):
+            if self.janela_publicacao.encerrada(alvo_id):
                 continue
             listagens = self.urls_listagem_agendadas[alvo_id]
             limite = resposta.meta["observatorio_limite_paginas"]
@@ -460,23 +466,22 @@ class CatalogoFontesSpider(Spider):
             return
 
         if (
-            self.janela_publicacao is not None
-            and response.meta.get("observatorio_tipo_pagina") == "detalhe_vaga"
+            response.meta.get("observatorio_tipo_pagina") == "detalhe_vaga"
             and 200 <= response.status < 300
         ):
-            velha = self.janela_publicacao.registrar(alvo_id, extrair_data_publicacao(response))
+            descartar = self.janela_publicacao.registrar(
+                alvo_id,
+                extrair_data_publicacao(response),
+                conhecida=normalizar_url_vaga(response.request.url) in self.urls_conhecidas,
+            )
             if self.janela_publicacao.encerrada(alvo_id):
                 # Nada mais será pedido a esta fonte; o que já estava na fila
                 # do Scrapy é descartado pelo middleware de encerramento.
                 self.detalhes_pendentes.get(alvo_id, {}).clear()
                 self.navegacao_pendente.get(alvo_id, {}).clear()
-                self.logger.info(
-                    "Fonte encerrada pela janela de %sh: alvo_id=%s",
-                    self.janela_publicacao.horas,
-                    alvo_id,
-                )
-            if velha:
-                # Vaga fora da janela não é guardada nem extraída.
+                self.logger.info("Fonte encerrada (vagas antigas ou já gravadas): %s", alvo_id)
+            if descartar:
+                # Vaga fora da janela ou já gravada não é guardada nem extraída.
                 return
 
         # Toda resposta que chega ao callback é preservada primeiro.

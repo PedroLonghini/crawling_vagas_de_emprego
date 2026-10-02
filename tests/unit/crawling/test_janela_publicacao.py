@@ -132,3 +132,86 @@ def test_middleware_descarta_requisicoes_de_fonte_encerrada() -> None:
     middleware.process_request(
         Request("https://exemplo.com/2", meta={"observatorio_alvo_id": "b"}), Spider()
     )  # type: ignore[arg-type]
+
+
+def test_vaga_sem_data_ja_gravada_e_descartada_e_encerra_a_fonte() -> None:
+    janela = JanelaPublicacao()
+
+    assert janela.registrar("a", None, conhecida=False) is False
+    assert not janela.encerrada("a")
+    assert janela.registrar("a", None, conhecida=True) is True
+    assert janela.encerrada("a")
+
+
+def test_vaga_com_data_ja_gravada_nao_encerra_sem_janela() -> None:
+    janela = JanelaPublicacao()
+    nova = DataPublicacao(datetime.now(UTC), True)
+
+    assert janela.registrar("a", nova, conhecida=True) is False
+    assert not janela.encerrada("a")
+
+
+def test_fonte_sem_data_so_e_classificada_apos_tres_leituras() -> None:
+    janela = JanelaPublicacao()
+
+    janela.registrar("a", None)
+    janela.registrar("a", None)
+    assert not janela.sem_data("a")
+    janela.registrar("a", None)
+    assert janela.sem_data("a")
+
+
+def test_fonte_que_mostrou_data_nunca_e_sem_data() -> None:
+    janela = JanelaPublicacao()
+    janela.registrar("a", DataPublicacao(datetime.now(UTC), True))
+    for _ in range(5):
+        janela.registrar("a", None)
+
+    assert not janela.sem_data("a")
+
+
+def _middleware_com(janela: JanelaPublicacao):
+    class Estatisticas:
+        def inc_value(self, *_: object) -> None: ...
+
+    class Crawler:
+        stats = Estatisticas()
+        spider = None
+
+    class Spider:
+        janela_publicacao = janela
+
+    return EncerramentoPorIdadeDownloaderMiddleware(Crawler()), Spider()  # type: ignore[arg-type]
+
+
+def test_fonte_sem_data_so_le_as_tres_primeiras_listagens() -> None:
+    janela = JanelaPublicacao()
+    for _ in range(3):
+        janela.registrar("a", None)
+    middleware, spider = _middleware_com(janela)
+
+    def listagem(numero: int, alvo: str = "a") -> Request:
+        return Request(
+            f"https://exemplo.com/?p={numero}",
+            meta={
+                "observatorio_alvo_id": alvo,
+                "observatorio_tipo_pagina": "inicial",
+                "observatorio_numero_pagina": numero,
+            },
+        )
+
+    middleware.process_request(listagem(3), spider)  # type: ignore[arg-type]
+    with pytest.raises(IgnoreRequest):
+        middleware.process_request(listagem(4), spider)  # type: ignore[arg-type]
+    middleware.process_request(listagem(4, alvo="b"), spider)  # type: ignore[arg-type]
+
+
+def test_carrega_urls_conhecidas(tmp_path) -> None:
+    from observatorio_vagas.crawling.janela_publicacao import carregar_urls_conhecidas
+
+    arquivo = tmp_path / "urls.txt"
+    arquivo.write_text("https://a.com/1\n\nhttps://a.com/2\n", encoding="utf-8")
+
+    assert carregar_urls_conhecidas(arquivo) == {"https://a.com/1", "https://a.com/2"}
+    assert carregar_urls_conhecidas(None) == frozenset()
+    assert carregar_urls_conhecidas(tmp_path / "nao_existe.txt") == frozenset()

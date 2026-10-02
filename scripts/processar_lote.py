@@ -49,6 +49,7 @@ from observatorio_vagas.crawling.inventario import (
     carregar_inventario_bruto_de_cadernos,
     carregar_inventario_bruto_desde,
 )
+from observatorio_vagas.crawling.urls import normalizar_url_vaga
 from observatorio_vagas.domain.anuncio import AnuncioVaga
 from observatorio_vagas.domain.politica_fonte import encontrar_restricao_dominio
 from observatorio_vagas.extraction.data_publicacao import ontem_brasilia
@@ -107,6 +108,27 @@ def _dominio_ignorado(alvo: AlvoColeta) -> bool:
     """Fontes do LinkedIn nunca entram no lote."""
 
     return "linkedin" in alvo.dominio.casefold()
+
+
+def _exportar_urls_conhecidas(destino: Path) -> Path | None:
+    """Grava as URLs das vagas já salvas no MongoDB para o crawler descartá-las."""
+
+    try:
+        banco = ConexaoMongoDB(get_settings()).banco
+        urls = {
+            normalizar_url_vaga(documento["url"])
+            for documento in banco["anuncios"].find({}, {"url": 1})
+            if documento.get("url")
+        }
+    except Exception as erro:
+        print(f"AVISO: não foi possível consultar o MongoDB ({type(erro).__name__}); ")
+        print("as vagas já gravadas não serão descartadas durante a coleta.")
+        return None
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    destino.write_text(os.linesep.join(sorted(urls)), encoding="utf-8")
+    print(f"Vagas já gravadas no MongoDB (descartadas se reaparecerem): {len(urls)}")
+    return destino
 
 
 def _processos_coleta_padrao() -> int:
@@ -196,6 +218,12 @@ def criar_parser() -> argparse.ArgumentParser:
         type=int,
         default=200,
         help="sites por processo do crawler (padrão: 200; entre 1 e 2000)",
+    )
+
+    parser.add_argument(
+        "--sem-descarte-mongo",
+        action="store_true",
+        help="não consulta o MongoDB para descartar vagas já gravadas durante a coleta",
     )
 
     parser.add_argument(
@@ -439,6 +467,7 @@ def _executar_crawler(
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    urls_conhecidas: Path | None = None,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
 
@@ -473,6 +502,7 @@ def _executar_crawler(
             # retomado pelo estado incremental na próxima rodada.
             *(("-s", f"CLOSESPIDER_TIMEOUT={tempo_maximo}") if tempo_maximo else ()),
             *(("-a", f"janela_horas={janela_horas}") if janela_horas else ()),
+            *(("-a", f"urls_conhecidas={urls_conhecidas}") if urls_conhecidas else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
             # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
             # era apagado no fim: todo dia virava uma coleta completa.
@@ -584,6 +614,7 @@ def _coletar_em_blocos(
     diretorio_estado: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    urls_conhecidas: Path | None = None,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
@@ -600,6 +631,7 @@ def _coletar_em_blocos(
             estado_incremental=_arquivo_estado(diretorio_estado, 1),
             tempo_maximo=tempo_maximo,
             janela_horas=janela_horas,
+            urls_conhecidas=urls_conhecidas,
         )
 
     falhas: dict[str, int] = {}
@@ -616,6 +648,7 @@ def _coletar_em_blocos(
                 estado_incremental=_arquivo_estado(diretorio_estado, numero),
                 tempo_maximo=tempo_maximo,
                 janela_horas=janela_horas,
+                urls_conhecidas=urls_conhecidas,
             ): numero
             for numero, fila in enumerate(filas, start=1)
             if fila
@@ -670,6 +703,7 @@ def _coletar_fila_em_blocos(
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    urls_conhecidas: Path | None = None,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
 
@@ -698,6 +732,7 @@ def _coletar_fila_em_blocos(
                 estado_incremental=estado_incremental,
                 tempo_maximo=tempo_maximo,
                 janela_horas=janela_horas,
+                urls_conhecidas=urls_conhecidas,
                 javascript=javascript,
                 catalogo=caminho_bloco,
                 etiqueta=f"BLOCO {numero_bloco}/{len(blocos)}",
@@ -730,6 +765,7 @@ def _coletar_fila_em_blocos(
                     estado_incremental=estado_incremental,
                     tempo_maximo=tempo_maximo,
                     janela_horas=janela_horas,
+                    urls_conhecidas=urls_conhecidas,
                     javascript=javascript,
                     catalogo=caminho_alvo,
                     etiqueta=f"ALVO ISOLADO {alvo.alvo_id}",
@@ -1236,6 +1272,11 @@ def executar(
         )
 
         inicio_fase = time.perf_counter()
+        urls_conhecidas = (
+            None
+            if opcoes.sem_descarte_mongo
+            else _exportar_urls_conhecidas(diretorio_cadernos.parent / "urls_conhecidas.txt")
+        )
         falhas_coleta = _coletar_em_blocos(
             diretorio_raw=diretorio_raw,
             diretorio_cadernos=diretorio_cadernos,
@@ -1248,6 +1289,7 @@ def executar(
             processos=opcoes.processos_coleta,
             tempo_maximo=(opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None),
             janela_horas=opcoes.janela_horas,
+            urls_conhecidas=urls_conhecidas,
             **(
                 {"limite_anuncios": opcoes.limite_anuncios}
                 if opcoes.limite_anuncios is not None

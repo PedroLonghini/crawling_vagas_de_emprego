@@ -10,13 +10,16 @@ no MongoDB a cada 10 s. No fim monta um relatório. No Mac ele também usa
 
 ## 1. Preparar o Mac (uma vez)
 
+Copie os comandos **sem comentários**: no terminal do Mac (zsh), o que vem depois de `#`
+vira argumento do comando e dá "too many arguments".
+
 ```bash
 cd caminho/do/projeto
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -e ".[crawler,mongodb,dev,medicao]"
-cp /caminho/seguro/.env .env        # nunca pelo git
-ulimit -n 10240                     # arquivos abertos; repita em cada terminal
+cp /caminho/seguro/.env .env
+ulimit -n 10240
 ```
 
 - Tire a pasta `data/` do Spotlight: Ajustes do Sistema → Spotlight → Privacidade.
@@ -57,10 +60,10 @@ o host.
 Abrir, conferir e fechar:
 
 ```bash
-ssh -f -N mongo-vm                                  # abre em segundo plano
-lsof -nP -iTCP:27019 -sTCP:LISTEN                   # deve listar o ssh
-python scripts/acompanhar_mongo.py --uma-vez        # deve mostrar as contagens
-pkill -f "ssh -f -N mongo-vm"                       # fecha (ou: pkill -f autossh)
+ssh -f -N mongo-vm
+lsof -nP -iTCP:27019 -sTCP:LISTEN
+python scripts/acompanhar_mongo.py --uma-vez
+pkill -f "ssh -f -N mongo-vm"
 ```
 
 Para um teste de horas, prefira `brew install autossh` e
@@ -73,10 +76,10 @@ Mantenha a lista fora do git (ela pode ser licenciada) e use o script que valida
 normaliza e remove duplicadas:
 
 ```bash
-mkdir -p ~/urls && cp /onde/estiver/urls_10mil.txt ~/urls/        # TXT (uma URL por linha) ou CSV com a coluna url
+mkdir -p ~/urls && cp /onde/estiver/urls_10mil.txt ~/urls/
 python scripts/preparar_lote_urls_licenciadas.py \
   --entrada ~/urls/urls_10mil.txt --diretorio-saida config/lote_10mil
-cat config/lote_10mil/relatorio_importacao.json | head -40         # quantas entraram e por que outras saíram
+cat config/lote_10mil/relatorio_importacao.json | head -40
 ```
 
 Isso gera `config/lote_10mil/catalogo_fontes.csv` e `fontes_autorizadas.csv`; use o
@@ -167,9 +170,9 @@ Regras para as 10 mil:
 ## 4. Durante o teste
 
 ```bash
-tail -f outputs/medicao/*_mac_10mil/lote.log                       # o que o lote diz
-python scripts/acompanhar_mongo.py                                  # anúncios, vagas e empresas
-tail -n 3 outputs/medicao/*_mac_10mil/amostras.csv                 # CPU, memória e disco agora
+tail -f outputs/medicao/*_mac_10mil/lote.log
+python scripts/acompanhar_mongo.py
+tail -n 3 outputs/medicao/*_mac_10mil/amostras.csv
 ```
 
 `Ctrl+C` encerra o lote e ainda gera o relatório do que foi feito. Rodar de novo

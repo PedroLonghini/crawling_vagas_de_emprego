@@ -210,7 +210,7 @@ def test_cnpj_ausente_continua_publicavel_com_url_de_candidatura() -> None:
     assert resultado.pronto_para_envio is True
     assert resultado.elegibilidade.elegivel is True
     assert resultado.payload is not None
-    assert "nationalRegister" not in resultado.payload["company"]
+    assert resultado.payload["company"]["nationalRegister"] == "00.000.000/0000-00"
 
 
 def test_url_de_candidatura_ausente_usa_url_de_origem_no_payload() -> None:
@@ -417,8 +417,13 @@ def test_sem_nome_da_empresa_na_leitura_a_vaga_nao_e_publicada() -> None:
 
     empresa, recrutador, anuncio, vaga = criar_cenario_completo()
     leitura = {
-        "campos": {"company": {"applyUrl": str(anuncio.url)}, "description": vaga.descricao_normalizada},
-        "diagnostico": {"campos": {"company.name": {"vazio": True, "procurado_em": ["plataforma"]}}},
+        "campos": {
+            "company": {"applyUrl": str(anuncio.url)},
+            "description": vaga.descricao_normalizada,
+        },
+        "diagnostico": {
+            "campos": {"company.name": {"vazio": True, "procurado_em": ["plataforma"]}}
+        },
     }
     anuncio = anuncio.model_copy(
         update={"campos_estruturados": {**anuncio.campos_estruturados, "_leitura": leitura}}

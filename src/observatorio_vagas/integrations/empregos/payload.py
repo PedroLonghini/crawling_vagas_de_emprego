@@ -217,6 +217,25 @@ def _incluir_campo(
     return campo.preenchido and not _valor_ausente(campo.valor)
 
 
+# A API do Empregos exige company.nationalRegister. Combinado com o responsável
+# pela integração em 2026-10-02, todas as vagas seguem com o CNPJ zerado.
+CNPJ_ZERADO = "00.000.000/0000-00"
+
+# Escrita que a API espera quando a fonte esconde o nome da empresa.
+NOME_EMPRESA_CONFIDENCIAL = "Confidential"
+
+
+def _ajustar_para_a_api(payload: dict[str, Any]) -> None:
+    """Aplica as regras da API que não vêm da fonte: CNPJ zerado e 'Confidential'."""
+
+    empresa = payload.setdefault("company", {})
+    empresa["nationalRegister"] = CNPJ_ZERADO
+
+    nome = empresa.get("name")
+    if isinstance(nome, str) and nome.strip().casefold() == NOME_EMPRESA_CONFIDENCIAL.casefold():
+        empresa["name"] = NOME_EMPRESA_CONFIDENCIAL
+
+
 def gerar_payload_empregos(
     relatorio: RelatorioProntidao,
 ) -> dict[str, Any]:
@@ -246,6 +265,8 @@ def gerar_payload_empregos(
             caminho=campo.campo,
             valor=campo.valor,
         )
+
+    _ajustar_para_a_api(payload)
 
     return payload
 

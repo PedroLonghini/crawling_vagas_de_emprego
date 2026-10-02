@@ -107,7 +107,7 @@ def test_gera_payload_com_objetos_aninhados() -> None:
         "recruiterId": "RECRUTADOR-001",
         "recruiterName": "Maria da Silva",
         "recruiterEmail": "maria@example.com",
-        "nationalRegister": "12.345.678/0001-90",
+        "nationalRegister": "00.000.000/0000-00",
     }
 
     assert payload["location"] == {
@@ -151,7 +151,7 @@ def test_omite_campos_opcionais_ausentes() -> None:
     assert "description" not in payload["company"]
     assert "companyId" not in payload["company"]
     assert "recruiterId" not in payload["company"]
-    assert "nationalRegister" not in payload["company"]
+    assert payload["company"]["nationalRegister"] == "00.000.000/0000-00"
 
     # Como min e max estão ausentes, o objeto salary
     # inteiro não precisa ser incluído.
@@ -224,3 +224,24 @@ def test_gera_json_legivel_sem_escapar_acentos() -> None:
     assert "\\u00e7" not in texto_json
 
     assert payload_lido["company"]["name"] == "Tecnologia Atlas"
+
+
+def test_todo_payload_leva_o_cnpj_zerado_mesmo_com_cnpj_real() -> None:
+    payload = gerar_payload_empregos(criar_relatorio())
+
+    assert payload["company"]["nationalRegister"] == "00.000.000/0000-00"
+
+
+def test_confidential_sai_com_c_maiusculo() -> None:
+    from observatorio_vagas.integrations.empregos.payload import _ajustar_para_a_api
+
+    for escrita in ("confidential", "CONFIDENTIAL", " Confidential "):
+        payload = {"company": {"name": escrita}}
+
+        _ajustar_para_a_api(payload)
+
+        assert payload["company"]["name"] == "Confidential"
+
+    outro = {"company": {"name": "Confidential Pharma"}}
+    _ajustar_para_a_api(outro)
+    assert outro["company"]["name"] == "Confidential Pharma"

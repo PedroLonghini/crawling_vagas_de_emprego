@@ -29,7 +29,7 @@ from concurrent.futures import Future, ProcessPoolExecutor, ThreadPoolExecutor, 
 from concurrent.futures.process import BrokenProcessPool
 from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from functools import partial
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -101,6 +101,12 @@ def _trabalhadores_padrao() -> int:
 
     nucleos = os.cpu_count() or 2
     return max(4, min(24, nucleos * 2))
+
+
+def _dominio_ignorado(alvo: AlvoColeta) -> bool:
+    """Fontes do LinkedIn nunca entram no lote."""
+
+    return "linkedin" in alvo.dominio.casefold()
 
 
 def _processos_coleta_padrao() -> int:
@@ -189,7 +195,17 @@ def criar_parser() -> argparse.ArgumentParser:
         "--alvos-por-coleta",
         type=int,
         default=200,
-        help=("quantidade máxima de sites em cada processo do crawler (padrão: 200)"),
+        help="sites por processo do crawler (padrão: 200; entre 1 e 2000)",
+    )
+
+    parser.add_argument(
+        "--tempo-maximo-bloco",
+        type=int,
+        default=None,
+        help=(
+            "minutos máximos de cada bloco de coleta; ao estourar, o bloco encerra e "
+            "o restante continua na próxima rodada (padrão: sem limite)"
+        ),
     )
 
     parser.add_argument(
@@ -198,7 +214,7 @@ def criar_parser() -> argparse.ArgumentParser:
         default=_processos_coleta_padrao(),
         help=(
             "processos do crawler em paralelo, separados por domínio "
-            f"(padrão: {_processos_coleta_padrao()}; entre 1 e 8)"
+            f"(padrão: {_processos_coleta_padrao()}; entre 1 e 12)"
         ),
     )
 
@@ -250,6 +266,9 @@ def criar_parser() -> argparse.ArgumentParser:
         "--publicados-ontem", action="store_true", help="publicados ontem em Brasília"
     )
     datas.add_argument(
+        "--publicados-hoje", action="store_true", help="publicados hoje em Brasília"
+    )
+    datas.add_argument(
         "--publicados-em", type=date.fromisoformat, help="data de publicação YYYY-MM-DD"
     )
     return parser
@@ -272,6 +291,9 @@ def _motivo_alvo_ignorado(
     somente_republicaveis: bool = False,
 ) -> str:
     """Explica por que um alvo não poderá ser coletado."""
+
+    if _dominio_ignorado(alvo):
+        return "domínio ignorado por decisão do usuário (LinkedIn)"
 
     restricao = encontrar_restricao_dominio(alvo.dominio)
 
@@ -406,6 +428,7 @@ def _executar_crawler(
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
     estado_incremental: Path | None = None,
+    tempo_maximo: int | None = None,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
 
@@ -436,6 +459,9 @@ def _executar_crawler(
                 else ()
             ),
             *(("-s", "JAVASCRIPT_ENABLED=True") if javascript else ()),
+            # Encerra o bloco com calma ao estourar o tempo: o que faltou é
+            # retomado pelo estado incremental na próxima rodada.
+            *(("-s", f"CLOSESPIDER_TIMEOUT={tempo_maximo}") if tempo_maximo else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
             # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
             # era apagado no fim: todo dia virava uma coleta completa.
@@ -545,6 +571,7 @@ def _coletar_em_blocos(
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
     diretorio_estado: Path | None = None,
+    tempo_maximo: int | None = None,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
@@ -559,6 +586,7 @@ def _coletar_em_blocos(
             diretorio_raw=diretorio_raw,
             diretorio_cadernos=diretorio_cadernos,
             estado_incremental=_arquivo_estado(diretorio_estado, 1),
+            tempo_maximo=tempo_maximo,
         )
 
     falhas: dict[str, int] = {}
@@ -573,6 +601,7 @@ def _coletar_em_blocos(
                 diretorio_raw=diretorio_raw,
                 diretorio_cadernos=diretorio_cadernos,
                 estado_incremental=_arquivo_estado(diretorio_estado, numero),
+                tempo_maximo=tempo_maximo,
             ): numero
             for numero, fila in enumerate(filas, start=1)
             if fila
@@ -625,6 +654,7 @@ def _coletar_fila_em_blocos(
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
     estado_incremental: Path | None = None,
+    tempo_maximo: int | None = None,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
 
@@ -651,6 +681,7 @@ def _coletar_fila_em_blocos(
                 diretorio_raw=diretorio_raw,
                 diretorio_cadernos=diretorio_cadernos,
                 estado_incremental=estado_incremental,
+                tempo_maximo=tempo_maximo,
                 javascript=javascript,
                 catalogo=caminho_bloco,
                 etiqueta=f"BLOCO {numero_bloco}/{len(blocos)}",
@@ -681,6 +712,7 @@ def _coletar_fila_em_blocos(
                     diretorio_raw=diretorio_raw,
                     diretorio_cadernos=diretorio_cadernos,
                     estado_incremental=estado_incremental,
+                    tempo_maximo=tempo_maximo,
                     javascript=javascript,
                     catalogo=caminho_alvo,
                     etiqueta=f"ALVO ISOLADO {alvo.alvo_id}",
@@ -1087,18 +1119,27 @@ def executar(
     parser = criar_parser()
     opcoes = parser.parse_args(argumentos)
     # Fixa a data antes do lote para evitar mudar o filtro ao atravessar meia-noite.
-    publicado_em = ontem_brasilia() if opcoes.publicados_ontem else opcoes.publicados_em
+    if opcoes.publicados_hoje:
+        publicado_em = ontem_brasilia() + timedelta(days=1)
+    elif opcoes.publicados_ontem:
+        publicado_em = ontem_brasilia()
+    else:
+        publicado_em = opcoes.publicados_em
 
     if opcoes.limite < 1 or opcoes.limite > 10000:
         print("ERRO: limite deve estar entre 1 e 10000")
         return 2
 
-    if opcoes.alvos_por_coleta < 1 or opcoes.alvos_por_coleta > 200:
-        print("ERRO: alvos-por-coleta deve estar entre 1 e 200")
+    if opcoes.alvos_por_coleta < 1 or opcoes.alvos_por_coleta > 2000:
+        print("ERRO: alvos-por-coleta deve estar entre 1 e 2000")
         return 2
 
-    if not 1 <= opcoes.processos_coleta <= 8:
-        print("ERRO: processos-coleta deve estar entre 1 e 8")
+    if opcoes.tempo_maximo_bloco is not None and opcoes.tempo_maximo_bloco < 1:
+        print("ERRO: tempo-maximo-bloco deve ser de pelo menos 1 minuto")
+        return 2
+
+    if not 1 <= opcoes.processos_coleta <= 12:
+        print("ERRO: processos-coleta deve estar entre 1 e 12")
         return 2
 
     if not 1 <= opcoes.processos_extracao <= 64:
@@ -1131,6 +1172,7 @@ def executar(
         alvo
         for alvo in alvos
         if alvo.habilitado_para_coleta
+        and not _dominio_ignorado(alvo)
         and (not opcoes.somente_republicaveis or alvo.habilitado_para_publicacao)
     )
 
@@ -1181,6 +1223,9 @@ def executar(
             alvos=executaveis,
             tamanho_bloco=opcoes.alvos_por_coleta,
             processos=opcoes.processos_coleta,
+            tempo_maximo=(
+                opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None
+            ),
             **(
                 {"limite_anuncios": opcoes.limite_anuncios}
                 if opcoes.limite_anuncios is not None

@@ -97,6 +97,21 @@ DOWNLOAD_SLOTS = {
         "delay": 0.5,
         "randomize_delay": True,
     },
+    # Portais que dominam o volume do lote diário: no lote de 1.000 fontes,
+    # empregandobrasil.com.br e emploive.com somaram 80% das 73 mil páginas.
+    # Sonda de 2026-10-02 (10 páginas por nível): com 2 e 4 requisições não
+    # houve 429, 403 nem 5xx, e o robots.txt não define Crawl-delay. Ficamos
+    # em 3 requisições; os demais sites seguem em 1 por segundo.
+    "empregandobrasil.com.br": {
+        "concurrency": 3,
+        "delay": 0.35,
+        "randomize_delay": True,
+    },
+    "emploive.com": {
+        "concurrency": 3,
+        "delay": 0.35,
+        "randomize_delay": True,
+    },
 }
 
 

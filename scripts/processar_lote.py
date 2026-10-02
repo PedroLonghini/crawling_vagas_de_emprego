@@ -405,6 +405,7 @@ def _executar_crawler(
     javascript: bool = False,
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
+    estado_incremental: Path | None = None,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
 
@@ -436,6 +437,13 @@ def _executar_crawler(
             ),
             *(("-s", "JAVASCRIPT_ENABLED=True") if javascript else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
+            # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
+            # era apagado no fim: todo dia virava uma coleta completa.
+            *(
+                ("-a", f"estado_incremental={estado_incremental}")
+                if estado_incremental is not None
+                else ()
+            ),
         ),
     )
 
@@ -521,6 +529,12 @@ def _calcular_limite_respostas(
     return paginas_configuradas + margem_operacional
 
 
+def _arquivo_estado(diretorio: Path | None, fila: int) -> Path | None:
+    """Estado incremental persistente da fila ``fila`` (None desliga)."""
+
+    return None if diretorio is None else diretorio / f"fila_{fila}.json"
+
+
 def _coletar_em_blocos(
     *,
     alvos: tuple[AlvoColeta, ...],
@@ -530,6 +544,7 @@ def _coletar_em_blocos(
     javascript: bool = False,
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
+    diretorio_estado: Path | None = None,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
@@ -543,6 +558,7 @@ def _coletar_em_blocos(
             javascript=javascript,
             diretorio_raw=diretorio_raw,
             diretorio_cadernos=diretorio_cadernos,
+            estado_incremental=_arquivo_estado(diretorio_estado, 1),
         )
 
     falhas: dict[str, int] = {}
@@ -556,6 +572,7 @@ def _coletar_em_blocos(
                 javascript=javascript,
                 diretorio_raw=diretorio_raw,
                 diretorio_cadernos=diretorio_cadernos,
+                estado_incremental=_arquivo_estado(diretorio_estado, numero),
             ): numero
             for numero, fila in enumerate(filas, start=1)
             if fila
@@ -607,6 +624,7 @@ def _coletar_fila_em_blocos(
     javascript: bool = False,
     diretorio_raw: Path | None = None,
     diretorio_cadernos: Path | None = None,
+    estado_incremental: Path | None = None,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
 
@@ -632,6 +650,7 @@ def _coletar_fila_em_blocos(
             codigo = _executar_crawler(
                 diretorio_raw=diretorio_raw,
                 diretorio_cadernos=diretorio_cadernos,
+                estado_incremental=estado_incremental,
                 javascript=javascript,
                 catalogo=caminho_bloco,
                 etiqueta=f"BLOCO {numero_bloco}/{len(blocos)}",
@@ -661,6 +680,7 @@ def _coletar_fila_em_blocos(
                 codigo_alvo = _executar_crawler(
                     diretorio_raw=diretorio_raw,
                     diretorio_cadernos=diretorio_cadernos,
+                    estado_incremental=estado_incremental,
                     javascript=javascript,
                     catalogo=caminho_alvo,
                     etiqueta=f"ALVO ISOLADO {alvo.alvo_id}",
@@ -1154,6 +1174,9 @@ def executar(
         falhas_coleta = _coletar_em_blocos(
             diretorio_raw=diretorio_raw,
             diretorio_cadernos=diretorio_cadernos,
+            # Um arquivo de estado por fila: as filas rodam em paralelo e cada
+            # uma regrava o seu inteiro; compartilhar um só perderia dados.
+            diretorio_estado=catalogo.parent / ".cache" / "lote",
             javascript=opcoes.javascript,
             alvos=executaveis,
             tamanho_bloco=opcoes.alvos_por_coleta,

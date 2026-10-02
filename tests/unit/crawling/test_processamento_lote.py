@@ -523,3 +523,22 @@ def test_alvo_grande_dividido_em_pedacos_igual_ao_sequencial(tmp_path: Path, mon
     assert paralelo == sequencial
     assert sequencial[0] == {"empresa_exemplo": 0, "vazio": processar_lote.CODIGO_SEM_ANUNCIOS}
     assert "Anúncios únicos: 20" in sequencial[1]
+
+
+def test_estado_incremental_vai_para_o_crawler_e_e_um_por_fila(tmp_path, monkeypatch):
+    """Sem isto, o estado incremental era apagado junto com o catálogo temporário."""
+
+    chamadas = []
+    monkeypatch.setattr(
+        processar_lote, "_executar_python", lambda **kwargs: chamadas.append(kwargs) or 0
+    )
+    estado = tmp_path / "estado" / "fila_2.json"
+
+    processar_lote._executar_crawler(
+        catalogo=tmp_path / "c.csv", etiqueta="t", limite_respostas=10, estado_incremental=estado
+    )
+
+    argumentos = chamadas[0]["argumentos"]
+    assert argumentos[argumentos.index(f"estado_incremental={estado}") - 1] == "-a"
+    assert processar_lote._arquivo_estado(tmp_path, 2) == tmp_path / "fila_2.json"
+    assert processar_lote._arquivo_estado(None, 2) is None

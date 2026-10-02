@@ -20,6 +20,7 @@ from observatorio_vagas.crawling.inventario import (
     RegistroInventarioBruto,
     carregar_inventario_bruto,
 )
+from observatorio_vagas.crawling.raw_storage import ler_corpo_bruto
 from observatorio_vagas.domain.anuncio import AnuncioVaga
 from observatorio_vagas.domain.enums import (
     Fonte,
@@ -176,7 +177,7 @@ def _carregar_corpo_verificado(
         raise ValueError("caminho do corpo está fora do diretório bruto")
 
     try:
-        corpo = caminho.read_bytes()
+        corpo = ler_corpo_bruto(caminho)
 
     except OSError as erro:
         raise ValueError("não foi possível ler o corpo armazenado") from erro

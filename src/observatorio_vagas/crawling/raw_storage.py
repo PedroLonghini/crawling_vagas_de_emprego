@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import gzip
 import json
 from dataclasses import dataclass
 from datetime import UTC
@@ -11,9 +12,25 @@ from typing import BinaryIO
 
 from observatorio_vagas.crawling.contracts import RespostaBruta
 
+# Corpos novos são gravados em gzip. O HTML em texto puro é verificado pelo
+# antivírus do Windows a ~0,4 MB/s em cada primeira leitura (medido em
+# 2026-10-02: 2,3 páginas/s); o mesmo conteúdo comprimido lê ~500x mais rápido
+# e ocupa um terço do espaço.
+SUFIXO_COMPRIMIDO = ".gz"
+NIVEL_GZIP = 3
+
 
 class ErroArmazenamentoBruto(RuntimeError):
     """Erro seguro durante o armazenamento de uma resposta bruta."""
+
+
+def ler_corpo_bruto(caminho: Path) -> bytes:
+    """Lê um corpo guardado, comprimido (``.gz``) ou no formato antigo (``.bin``)."""
+
+    dados = caminho.read_bytes()
+    if caminho.suffix == SUFIXO_COMPRIMIDO:
+        return gzip.decompress(dados)
+    return dados
 
 
 @dataclass(frozen=True, slots=True)
@@ -106,8 +123,16 @@ class ArmazenamentoBrutoLocal:
         # Isso evita colocar milhões de arquivos no mesmo diretório.
         prefixo_hash = hash_conteudo[:2]
 
-        # Um corpo idêntico sempre aponta para o mesmo caminho.
-        caminho_corpo = self._diretorio_base / "corpos" / prefixo_hash / f"{hash_conteudo}.bin"
+        # Um corpo idêntico sempre aponta para o mesmo caminho. Corpos já
+        # guardados no formato antigo (sem compressão) continuam sendo usados.
+        pasta_corpo = self._diretorio_base / "corpos" / prefixo_hash
+        caminho_antigo = pasta_corpo / f"{hash_conteudo}.bin"
+        comprimido = not caminho_antigo.exists()
+        caminho_corpo = (
+            pasta_corpo / f"{hash_conteudo}.bin{SUFIXO_COMPRIMIDO}"
+            if comprimido
+            else caminho_antigo
+        )
 
         # Todas as datas são organizadas em UTC.
         instante_utc = resposta.coletado_em.astimezone(UTC)
@@ -194,7 +219,11 @@ class ArmazenamentoBrutoLocal:
             # O corpo é criado somente se ainda não existir.
             corpo_novo = self._escrever_se_ausente(
                 caminho_corpo,
-                resposta.corpo,
+                (
+                    gzip.compress(resposta.corpo, compresslevel=NIVEL_GZIP, mtime=0)
+                    if comprimido
+                    else resposta.corpo
+                ),
             )
 
             # Cada evento de coleta recebe seu JSON de metadados.

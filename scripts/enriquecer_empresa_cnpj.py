@@ -17,6 +17,7 @@ from observatorio_vagas.crawling.inventario import (
     RegistroInventarioBruto,
     carregar_inventario_bruto,
 )
+from observatorio_vagas.crawling.raw_storage import ler_corpo_bruto
 from observatorio_vagas.domain.common import agora_utc
 from observatorio_vagas.domain.empresa import (
     Empresa,
@@ -124,7 +125,7 @@ def carregar_corpo_verificado(
     if not caminho.is_file():
         raise FileNotFoundError(f"corpo bruto não encontrado: {registro.caminho_corpo}")
 
-    conteudo = caminho.read_bytes()
+    conteudo = ler_corpo_bruto(caminho)
 
     if len(conteudo) != registro.tamanho_bytes:
         raise ValueError(

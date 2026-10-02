@@ -72,7 +72,7 @@ def test_pipeline_salva_resposta_bruta(
     assert item_devolvido is resposta
 
     # O corpo original deve ser salvo.
-    assert len(list(tmp_path.rglob("*.bin"))) == 1
+    assert len(list(tmp_path.rglob("*.bin*"))) == 1
 
     # Os metadados devem ser salvos.
     assert len(list(tmp_path.rglob("*.json"))) == 1
@@ -101,7 +101,7 @@ def test_pipeline_ignora_outros_tipos_de_item(
     assert item_devolvido is outro_item
 
     # Nenhum arquivo deve ser criado.
-    assert not list(tmp_path.rglob("*.bin"))
+    assert not list(tmp_path.rglob("*.bin*"))
 
     assert not list(tmp_path.rglob("*.json"))
 
@@ -133,6 +133,6 @@ def test_pipeline_usa_diretorio_configurado_no_scrapy(
         item=criar_resposta_bruta(),
     )
 
-    assert len(list(diretorio_configurado.rglob("*.bin"))) == 1
+    assert len(list(diretorio_configurado.rglob("*.bin*"))) == 1
 
     assert len(list(diretorio_configurado.rglob("*.json"))) == 1

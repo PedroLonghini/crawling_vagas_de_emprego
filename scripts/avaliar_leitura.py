@@ -18,6 +18,7 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+from observatorio_vagas.crawling.raw_storage import ler_corpo_bruto
 from observatorio_vagas.extraction.leitura.camadas import InventarioPagina, montar_inventario
 from observatorio_vagas.extraction.leitura.interpretacao import ler_vaga, validar_apply_url
 from observatorio_vagas.extraction.url_candidatura import extrair_url_candidatura_html
@@ -31,7 +32,7 @@ ENTIDADE = re.compile(r"&(amp|lt|gt|quot|nbsp|#\d+);")
 
 def _corpo(referencia: str) -> tuple[dict, bytes]:
     meta = json.loads((RAW / referencia).read_text(encoding="utf-8"))
-    return meta, (RAW / meta["caminho_corpo"]).read_bytes()
+    return meta, ler_corpo_bruto(RAW / meta["caminho_corpo"])
 
 
 def _atributos_abler(corpo: bytes, id_externo: str) -> dict | None:

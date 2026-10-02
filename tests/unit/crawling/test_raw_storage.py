@@ -5,7 +5,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from observatorio_vagas.crawling.contracts import RespostaBruta
-from observatorio_vagas.crawling.raw_storage import ArmazenamentoBrutoLocal
+from observatorio_vagas.crawling.raw_storage import ArmazenamentoBrutoLocal, ler_corpo_bruto
 from observatorio_vagas.domain.enums import Fonte, TipoPaginaColeta
 
 DATA_INICIAL = datetime(2026, 8, 20, 15, 0, tzinfo=UTC)
@@ -58,7 +58,7 @@ def test_salvar_cria_corpo_e_metadados(
     assert resultado.caminho_corpo.exists()
     assert resultado.caminho_metadados.exists()
 
-    assert resultado.caminho_corpo.read_bytes() == CORPO_HTML
+    assert ler_corpo_bruto(resultado.caminho_corpo) == CORPO_HTML
 
     metadados = json.loads(resultado.caminho_metadados.read_text(encoding="utf-8"))
 
@@ -75,7 +75,7 @@ def test_salvar_cria_corpo_e_metadados(
 
     caminho_corpo = tmp_path / metadados["caminho_corpo"]
 
-    assert caminho_corpo.read_bytes() == CORPO_HTML
+    assert ler_corpo_bruto(caminho_corpo) == CORPO_HTML
 
 
 def test_referencia_e_relativa(
@@ -103,7 +103,7 @@ def test_hash_distribui_corpos_em_subpastas(
     prefixo_esperado = resultado.hash_conteudo[:2]
 
     assert resultado.caminho_corpo.parent.name == prefixo_esperado
-    assert resultado.caminho_corpo.name == f"{resultado.hash_conteudo}.bin"
+    assert resultado.caminho_corpo.name == f"{resultado.hash_conteudo}.bin.gz"
 
 
 def test_mesma_resposta_nao_sobrescreve_corpo(
@@ -122,7 +122,7 @@ def test_mesma_resposta_nao_sobrescreve_corpo(
     assert primeiro.caminho_corpo == segundo.caminho_corpo
     assert primeiro.caminho_metadados == segundo.caminho_metadados
 
-    corpos = list((tmp_path / "corpos").rglob("*.bin"))
+    corpos = list((tmp_path / "corpos").rglob("*.bin*"))
 
     assert len(corpos) == 1
 
@@ -153,7 +153,7 @@ def test_coletas_diferentes_reutilizam_o_mesmo_corpo(
     assert primeiro.caminho_corpo == segundo.caminho_corpo
     assert primeiro.caminho_metadados != segundo.caminho_metadados
 
-    corpos = list((tmp_path / "corpos").rglob("*.bin"))
+    corpos = list((tmp_path / "corpos").rglob("*.bin*"))
 
     respostas = list((tmp_path / "respostas").rglob("*.json"))
 
@@ -222,3 +222,29 @@ def test_contextos_de_pagina_diferentes_geram_eventos_diferentes(
     )
 
     assert len(arquivos_metadados) == 2
+
+
+def test_corpo_novo_e_gravado_comprimido_e_volta_igual(tmp_path) -> None:
+    armazenamento = ArmazenamentoBrutoLocal(tmp_path)
+    resposta = criar_resposta(corpo=CORPO_HTML * 40)
+
+    resultado = armazenamento.salvar(resposta)
+
+    assert resultado.caminho_corpo.suffix == ".gz"
+    assert resultado.caminho_corpo.read_bytes()[:2] == b"\x1f\x8b"
+    assert ler_corpo_bruto(resultado.caminho_corpo) == resposta.corpo
+    assert resultado.caminho_corpo.stat().st_size < len(resposta.corpo)
+
+
+def test_corpo_no_formato_antigo_continua_sendo_reutilizado(tmp_path) -> None:
+    resposta = criar_resposta(corpo=CORPO_HTML * 40)
+    antigo = tmp_path / "corpos" / resposta.hash_conteudo[:2] / f"{resposta.hash_conteudo}.bin"
+    antigo.parent.mkdir(parents=True)
+    antigo.write_bytes(resposta.corpo)
+
+    resultado = ArmazenamentoBrutoLocal(tmp_path).salvar(resposta)
+
+    assert resultado.caminho_corpo == antigo
+    assert resultado.corpo_novo is False
+    assert ler_corpo_bruto(resultado.caminho_corpo) == resposta.corpo
+    assert not list(tmp_path.rglob("*.gz"))

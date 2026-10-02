@@ -199,6 +199,17 @@ def criar_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--janela-horas",
+        type=int,
+        default=None,
+        help=(
+            "coleta só vagas publicadas nas últimas N horas: a fonte é encerrada quando "
+            "3 vagas seguidas passam da janela (exige data de publicação na página; "
+            "padrão: sem janela)"
+        ),
+    )
+
+    parser.add_argument(
         "--tempo-maximo-bloco",
         type=int,
         default=None,
@@ -427,6 +438,7 @@ def _executar_crawler(
     diretorio_cadernos: Path | None = None,
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
+    janela_horas: int | None = None,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
 
@@ -460,6 +472,7 @@ def _executar_crawler(
             # Encerra o bloco com calma ao estourar o tempo: o que faltou é
             # retomado pelo estado incremental na próxima rodada.
             *(("-s", f"CLOSESPIDER_TIMEOUT={tempo_maximo}") if tempo_maximo else ()),
+            *(("-a", f"janela_horas={janela_horas}") if janela_horas else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
             # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
             # era apagado no fim: todo dia virava uma coleta completa.
@@ -570,6 +583,7 @@ def _coletar_em_blocos(
     diretorio_cadernos: Path | None = None,
     diretorio_estado: Path | None = None,
     tempo_maximo: int | None = None,
+    janela_horas: int | None = None,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
@@ -585,6 +599,7 @@ def _coletar_em_blocos(
             diretorio_cadernos=diretorio_cadernos,
             estado_incremental=_arquivo_estado(diretorio_estado, 1),
             tempo_maximo=tempo_maximo,
+            janela_horas=janela_horas,
         )
 
     falhas: dict[str, int] = {}
@@ -600,6 +615,7 @@ def _coletar_em_blocos(
                 diretorio_cadernos=diretorio_cadernos,
                 estado_incremental=_arquivo_estado(diretorio_estado, numero),
                 tempo_maximo=tempo_maximo,
+                janela_horas=janela_horas,
             ): numero
             for numero, fila in enumerate(filas, start=1)
             if fila
@@ -653,6 +669,7 @@ def _coletar_fila_em_blocos(
     diretorio_cadernos: Path | None = None,
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
+    janela_horas: int | None = None,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
 
@@ -680,6 +697,7 @@ def _coletar_fila_em_blocos(
                 diretorio_cadernos=diretorio_cadernos,
                 estado_incremental=estado_incremental,
                 tempo_maximo=tempo_maximo,
+                janela_horas=janela_horas,
                 javascript=javascript,
                 catalogo=caminho_bloco,
                 etiqueta=f"BLOCO {numero_bloco}/{len(blocos)}",
@@ -711,6 +729,7 @@ def _coletar_fila_em_blocos(
                     diretorio_cadernos=diretorio_cadernos,
                     estado_incremental=estado_incremental,
                     tempo_maximo=tempo_maximo,
+                    janela_horas=janela_horas,
                     javascript=javascript,
                     catalogo=caminho_alvo,
                     etiqueta=f"ALVO ISOLADO {alvo.alvo_id}",
@@ -1134,6 +1153,10 @@ def executar(
         print("ERRO: alvos-por-coleta deve estar entre 1 e 2000")
         return 2
 
+    if opcoes.janela_horas is not None and opcoes.janela_horas < 1:
+        print("ERRO: janela-horas deve ser pelo menos 1")
+        return 2
+
     if opcoes.tempo_maximo_bloco is not None and opcoes.tempo_maximo_bloco < 1:
         print("ERRO: tempo-maximo-bloco deve ser de pelo menos 1 minuto")
         return 2
@@ -1224,6 +1247,7 @@ def executar(
             tamanho_bloco=opcoes.alvos_por_coleta,
             processos=opcoes.processos_coleta,
             tempo_maximo=(opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None),
+            janela_horas=opcoes.janela_horas,
             **(
                 {"limite_anuncios": opcoes.limite_anuncios}
                 if opcoes.limite_anuncios is not None

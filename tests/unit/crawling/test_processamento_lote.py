@@ -131,7 +131,7 @@ def test_lote_somente_republicaveis_ignora_fonte_somente_coleta(
         "coleta,Coleta,outra,https://coleta.example/,true,10,somente_coleta",
         (
             "publica,Pública,outra,https://publica.example/,true,10,aprovada,"
-                "CC BY 4.0,https://creativecommons.org/licenses/by/4.0/,true,true"
+            "CC BY 4.0,https://creativecommons.org/licenses/by/4.0/,true,true"
         ),
     )
     processados: list[str] = []
@@ -395,11 +395,7 @@ def test_distribuicao_por_dominio_nao_separa_fontes_do_mesmo_site(tmp_path: Path
         carregar_alvos_csv(catalogo),
         processos=3,
     )
-    filas_por_alvo = {
-        alvo.alvo_id: numero
-        for numero, fila in enumerate(filas)
-        for alvo in fila
-    }
+    filas_por_alvo = {alvo.alvo_id: numero for numero, fila in enumerate(filas) for alvo in fila}
 
     assert set(filas_por_alvo) == {"primeira", "segunda", "terceira"}
     assert filas_por_alvo["primeira"] == filas_por_alvo["segunda"]
@@ -542,3 +538,61 @@ def test_estado_incremental_vai_para_o_crawler_e_e_um_por_fila(tmp_path, monkeyp
     assert argumentos[argumentos.index(f"estado_incremental={estado}") - 1] == "-a"
     assert processar_lote._arquivo_estado(tmp_path, 2) == tmp_path / "fila_2.json"
     assert processar_lote._arquivo_estado(None, 2) is None
+
+
+def test_dominios_grandes_ficam_em_filas_separadas(tmp_path: Path) -> None:
+    linhas = [
+        f"a{n},Empresa,outra,https://grande{g}.example/vagas/{n},true,5,somente_coleta"
+        for g in (1, 2, 3)
+        for n in range(10 * g, 10 * g + 6 - g)
+    ]
+    linhas.append("p1,Empresa,outra,https://pequeno.example/vagas,true,5,somente_coleta")
+    alvos = carregar_alvos_csv(_escrever_catalogo(tmp_path, *linhas))
+
+    filas = processar_lote._distribuir_alvos_por_dominio(alvos, 3)
+
+    dominios_por_fila = [{alvo.dominio for alvo in fila} for fila in filas]
+    grandes = [d for d in dominios_por_fila if any(x.startswith("grande") for x in d)]
+    assert len(grandes) == 3
+    assert all(sum(x.startswith("grande") for x in d) == 1 for d in dominios_por_fila)
+
+
+def test_distribuicao_lembra_a_fila_de_cada_dominio(tmp_path: Path) -> None:
+    memoria = tmp_path / "distribuicao.json"
+    primeiro = carregar_alvos_csv(
+        _escrever_catalogo(
+            tmp_path,
+            "a1,Empresa,outra,https://a.example/1,true,5,somente_coleta",
+            "a2,Empresa,outra,https://a.example/2,true,5,somente_coleta",
+            "b1,Empresa,outra,https://b.example/1,true,5,somente_coleta",
+        )
+    )
+    antes = processar_lote._distribuir_alvos_por_dominio(primeiro, 2, memoria)
+
+    # Um domínio novo e maior não pode tirar os antigos de suas filas.
+    segundo = carregar_alvos_csv(
+        _escrever_catalogo(
+            tmp_path,
+            *[f"c{n},Empresa,outra,https://c.example/{n},true,5,somente_coleta" for n in range(5)],
+            "a1,Empresa,outra,https://a.example/1,true,5,somente_coleta",
+            "b1,Empresa,outra,https://b.example/1,true,5,somente_coleta",
+        )
+    )
+    depois = processar_lote._distribuir_alvos_por_dominio(segundo, 2, memoria)
+
+    def fila_de(filas, dominio):
+        return next(n for n, fila in enumerate(filas) if any(a.dominio == dominio for a in fila))
+
+    assert fila_de(antes, "a.example") == fila_de(depois, "a.example")
+    assert fila_de(antes, "b.example") == fila_de(depois, "b.example")
+
+
+def test_distribuicao_mantem_filas_vazias_para_numerar_o_estado(tmp_path: Path) -> None:
+    alvos = carregar_alvos_csv(
+        _escrever_catalogo(tmp_path, "a1,Empresa,outra,https://a.example/1,true,5,somente_coleta")
+    )
+
+    filas = processar_lote._distribuir_alvos_por_dominio(alvos, 4)
+
+    assert len(filas) == 4
+    assert sum(1 for fila in filas if fila) == 1

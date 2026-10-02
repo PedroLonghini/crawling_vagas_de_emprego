@@ -19,6 +19,7 @@ from __future__ import annotations
 import argparse
 import csv
 import io
+import json
 import multiprocessing
 import os
 import subprocess
@@ -31,6 +32,7 @@ from contextlib import ExitStack, redirect_stdout
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from functools import partial
+from itertools import zip_longest
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any
@@ -618,24 +620,29 @@ def _coletar_em_blocos(
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
-    filas = _distribuir_alvos_por_dominio(alvos, processos)
+    filas = _distribuir_alvos_por_dominio(
+        alvos,
+        processos,
+        None if diretorio_estado is None else diretorio_estado / "distribuicao.json",
+    )
+    ativas = [(numero, fila) for numero, fila in enumerate(filas, start=1) if fila]
 
-    if len(filas) == 1:
+    if len(ativas) == 1:
         return _coletar_fila_em_blocos(
-            alvos=filas[0],
+            alvos=ativas[0][1],
             tamanho_bloco=tamanho_bloco,
             limite_anuncios=limite_anuncios,
             javascript=javascript,
             diretorio_raw=diretorio_raw,
             diretorio_cadernos=diretorio_cadernos,
-            estado_incremental=_arquivo_estado(diretorio_estado, 1),
+            estado_incremental=_arquivo_estado(diretorio_estado, ativas[0][0]),
             tempo_maximo=tempo_maximo,
             janela_horas=janela_horas,
             urls_conhecidas=urls_conhecidas,
         )
 
     falhas: dict[str, int] = {}
-    with ThreadPoolExecutor(max_workers=len(filas)) as executor:
+    with ThreadPoolExecutor(max_workers=max(1, len(ativas))) as executor:
         futuros = {
             executor.submit(
                 _coletar_fila_em_blocos,
@@ -650,8 +657,7 @@ def _coletar_em_blocos(
                 janela_horas=janela_horas,
                 urls_conhecidas=urls_conhecidas,
             ): numero
-            for numero, fila in enumerate(filas, start=1)
-            if fila
+            for numero, fila in ativas
         }
 
         for futuro in as_completed(futuros):
@@ -667,29 +673,68 @@ def _coletar_em_blocos(
 def _distribuir_alvos_por_dominio(
     alvos: tuple[AlvoColeta, ...],
     processos: int,
+    memoria: Path | None = None,
 ) -> tuple[tuple[AlvoColeta, ...], ...]:
-    """Distribui domínios inteiros entre processos para manter o limite por site."""
+    """Distribui domínios inteiros entre processos para manter o limite por site.
+
+    Os domínios com mais fontes vão primeiro, cada um para a fila menos
+    carregada: os sites grandes ficam em filas separadas e rodam ao mesmo
+    tempo, em vez de esperar uns pelos outros. A escolha é guardada em
+    ``memoria`` para o domínio voltar sempre à mesma fila, pois o estado
+    incremental é gravado por fila. Filas vazias são mantidas (a posição é o
+    número da fila).
+    """
 
     if processos < 1:
         raise ValueError("processos precisa ser pelo menos 1")
 
-    filas: list[list[AlvoColeta]] = [[] for _ in range(processos)]
-    destino_por_dominio: dict[str, int] = {}
-
+    peso: dict[str, int] = {}
     for alvo in alvos:
         dominio = alvo.dominio.casefold()
-        destino = destino_por_dominio.get(dominio)
+        peso[dominio] = peso.get(dominio, 0) + 1
 
-        if destino is None:
-            # A soma dos bytes é determinística entre execuções e não exige
-            # estado adicional. O ponto essencial é que um domínio sempre
-            # permaneça na mesma fila, preservando o limite por site.
-            destino = sum(dominio.encode("utf-8")) % processos
-            destino_por_dominio[dominio] = destino
+    destino_por_dominio: dict[str, int] = {}
+    if memoria is not None and memoria.exists():
+        try:
+            guardado = json.loads(memoria.read_text(encoding="utf-8"))
+            if guardado.get("processos") == processos:
+                destino_por_dominio = {
+                    dominio: int(fila)
+                    for dominio, fila in guardado.get("dominios", {}).items()
+                    if dominio in peso and 0 <= int(fila) < processos
+                }
+        except (OSError, ValueError, AttributeError):
+            destino_por_dominio = {}
 
-        filas[destino].append(alvo)
+    carga = [0] * processos
+    for dominio, fila in destino_por_dominio.items():
+        carga[fila] += peso[dominio]
 
-    return tuple(tuple(fila) for fila in filas if fila)
+    novos = sorted((d for d in peso if d not in destino_por_dominio), key=lambda d: (-peso[d], d))
+    for dominio in novos:
+        fila = min(range(processos), key=lambda n: (carga[n], n))
+        destino_por_dominio[dominio] = fila
+        carga[fila] += peso[dominio]
+
+    if memoria is not None and novos:
+        try:
+            memoria.parent.mkdir(parents=True, exist_ok=True)
+            memoria.write_text(
+                json.dumps(
+                    {"processos": processos, "dominios": destino_por_dominio},
+                    ensure_ascii=False,
+                    indent=1,
+                ),
+                encoding="utf-8",
+            )
+        except OSError:
+            pass
+
+    filas: list[list[AlvoColeta]] = [[] for _ in range(processos)]
+    for alvo in alvos:
+        filas[destino_por_dominio[alvo.dominio.casefold()]].append(alvo)
+
+    return tuple(tuple(fila) for fila in filas)
 
 
 def _coletar_fila_em_blocos(
@@ -902,6 +947,10 @@ def _extrair_alvos(
         # Como refazer cada tarefa aqui mesmo, se o pool quebrar.
         refazer: dict[Future[Any], Callable[[], Any]] = {}
 
+        pedacos_por_alvo: list[
+            list[tuple[AlvoColeta, int, tuple[RegistroInventarioBruto, ...]]]
+        ] = []
+
         for alvo in ordenados:
             registros = registros_por_alvo.get(alvo.alvo_id, ())
 
@@ -921,24 +970,33 @@ def _extrair_alvos(
             pedacos[alvo.alvo_id] = [None] * len(partes)
             inicio_alvo[alvo.alvo_id] = time.perf_counter()
 
-            for posicao, parte in enumerate(partes):
-                futuro = executor.submit(
-                    extrair_parcial,
-                    diretorio_raw,
-                    parte,
-                    alvo_id=alvo.alvo_id,
-                    coletado_desde=coletado_desde,
-                    cache_paginas=cache_paginas,
-                )
-                futuros_pedaco[futuro] = (alvo, posicao)
-                refazer[futuro] = partial(
-                    extrair_parcial,
-                    diretorio_raw,
-                    parte,
-                    alvo_id=alvo.alvo_id,
-                    coletado_desde=coletado_desde,
-                    cache_paginas=cache_paginas,
-                )
+            pedacos_por_alvo.append(
+                [(alvo, posicao, parte) for posicao, parte in enumerate(partes)]
+            )
+
+        # Os pedaços dos alvos grandes entram intercalados (um de cada alvo por
+        # vez): todos avançam juntos e terminam por volta do mesmo momento, em
+        # vez de um alvo gigante terminar e só então o seguinte começar.
+        for alvo, posicao, parte in (
+            item for rodada in zip_longest(*pedacos_por_alvo) for item in rodada if item is not None
+        ):
+            futuro = executor.submit(
+                extrair_parcial,
+                diretorio_raw,
+                parte,
+                alvo_id=alvo.alvo_id,
+                coletado_desde=coletado_desde,
+                cache_paginas=cache_paginas,
+            )
+            futuros_pedaco[futuro] = (alvo, posicao)
+            refazer[futuro] = partial(
+                extrair_parcial,
+                diretorio_raw,
+                parte,
+                alvo_id=alvo.alvo_id,
+                coletado_desde=coletado_desde,
+                cache_paginas=cache_paginas,
+            )
 
         try:
             yield from _resultados_extracao(

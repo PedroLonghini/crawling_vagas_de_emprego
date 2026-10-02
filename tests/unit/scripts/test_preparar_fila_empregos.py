@@ -50,7 +50,7 @@ def test_limite_invalido_para_antes_de_consultar_mongodb(capsys: object) -> None
     codigo = preparar_fila_empregos.executar(["--limite", "0"])
 
     assert codigo == 2
-    assert "limite deve estar entre 1 e 10000" in capsys.readouterr().out
+    assert "limite deve estar entre 1 e 50000" in capsys.readouterr().out
 
 
 def test_item_json_preserva_ids_bloqueios_e_percentual() -> None:

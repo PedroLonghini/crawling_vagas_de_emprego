@@ -386,6 +386,12 @@ class CatalogoFontesSpider(Spider):
         URL recusada pela fábrica não ocupa vaga.
         """
         if self.limite_anuncios is None:
+            if maximo_detalhes is not None:
+                # O lote também vale sem orçamento separado: navegação passa, detalhes
+                # só até o teto.
+                navegacao_set = set(navegacao)
+                detalhes = [url for url in urls if url not in navegacao_set][:maximo_detalhes]
+                urls = [*(url for url in urls if url in navegacao_set), *detalhes]
             return criar_requisicoes_detalhe(
                 resposta=resposta,
                 urls=urls,
@@ -940,7 +946,11 @@ class CatalogoFontesSpider(Spider):
         if motor is None:
             return
         for requisicao in self._proximos_detalhes(alvo_id):
-            motor.crawl(requisicao)
+            try:
+                motor.crawl(requisicao)
+            except RuntimeError:
+                # O spider está fechando; não há mais o que agendar.
+                return
 
     @staticmethod
     def _marcar_origem_detalhe(requisicao: Request, origem: object) -> None:

@@ -359,3 +359,37 @@ def test_frase_que_comeca_com_candidatos_nao_encerra_o_bloco():
     bloco = bloco_da_vaga(corpo, "Analista de Marketing Digital")
 
     assert bloco is not None and "rh@empresa.example" in bloco
+
+
+def test_endereco_com_trecho_de_codigo_e_recusado():
+    assert validar_endereco("window.location.href,page:`")
+    assert validar_endereco("/^(?:about")
+    assert validar_endereco('<"')
+    assert validar_endereco("Presidente Prudente, SP") is None
+
+
+def _ler_local(json_ld: dict, titulo: str = "Motorista Logístico", corpo: str = "") -> str | None:
+    html = (
+        f'<html><head><script type="application/ld+json">{json.dumps(json_ld)}</script>'
+        f"</head><body><h1>{titulo}</h1>{corpo}</body></html>"
+    )
+    url = "https://careers.empresa.example/jobs/1"
+    leitura = ler_vaga(
+        montar_inventario(html.encode(), url=url), titulo=titulo, id_externo="1", url_vaga=url
+    )
+    return (leitura.campos.get("location") or {}).get("address")
+
+
+def test_macrorregiao_nao_entra_como_estado_e_a_uf_vem_do_texto():
+    vaga = {
+        "@type": "JobPosting",
+        "title": "Motorista Logístico",
+        "jobLocation": {"address": {"addressLocality": "Recife", "addressRegion": "Nordeste"}},
+    }
+
+    assert _ler_local(vaga) == "Recife"
+    assert _ler_local(vaga, corpo="<p>Local de trabalho: Recife - PE</p>") == "Recife, PE"
+
+
+def test_cidade_do_titulo_quando_nada_mais_traz_o_local():
+    assert _ler_local({"@type": "WebPage"}, titulo="Vendedor em Recife") == "Recife"

@@ -203,3 +203,22 @@ def test_nao_confunde_modalidade_nem_sigla_solta_com_local() -> None:
     assert _local("Conhecimento em TI SP e SQL, atender a LGPD e CLT PA") is None
     assert _local("Sem nenhuma pista de local nesta vaga") is None
     assert _local("") is None
+
+
+def test_rotulo_no_meio_da_linha_e_valor_cortado_no_proximo_rotulo() -> None:
+    assert _local("Estágio Presencial Cidade: Presidente Prudente") == "Presidente Prudente"
+    assert _local("Vaga Cidade: Presidente Prudente Bolsa: R$ 1.100") == "Presidente Prudente"
+
+
+def test_cidade_no_titulo() -> None:
+    from observatorio_vagas.extraction.leitura.texto_livre import cidade_do_titulo
+
+    def cidade(titulo: str) -> str | None:
+        leitura = cidade_do_titulo(titulo, "titulo")
+        return leitura.valor if leitura else None
+
+    assert cidade("Vaga: Vendedor em Recife") == "Recife"
+    assert cidade("Analista em Campinas - SP") == "Campinas, SP"
+    assert cidade("Operador em Sapucaia do Sul/RS (temporário)") == "Sapucaia do Sul, RS"
+    assert cidade("Analista em Tecnologia") is None
+    assert cidade("Vendedor em Loja de Shopping") is None

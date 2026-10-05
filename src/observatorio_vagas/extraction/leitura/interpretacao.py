@@ -22,9 +22,11 @@ from observatorio_vagas.extraction.leitura.camadas import (
     secoes_do_texto,
 )
 from observatorio_vagas.extraction.leitura.texto_livre import (
+    REGIOES_DO_BRASIL,
     Indefinido,
     Leitura,
     Salario,
+    cidade_do_titulo,
     interpretar_cep,
     interpretar_cnpj,
     interpretar_email_candidatura,
@@ -500,7 +502,13 @@ def limpar_descricao(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
 
 
+_SINAIS_DE_CODIGO = re.compile(r"[{}<>\\$`=;^]|window\.|function\b|=>|\(\?:")
+
+
 def validar_endereco(endereco: str) -> str | None:
+    if _SINAIS_DE_CODIGO.search(endereco):
+        # Ex.: "window.location.href,page:`" e "/^(?:about" lidos do JavaScript da página.
+        return "parece trecho de código"
     if len(endereco) > 100:
         return "mais de 100 caracteres"
     if endereco[:1].islower():
@@ -527,11 +535,20 @@ def _jsonld(inv: InventarioPagina, *caminho: str) -> Any:
     return None
 
 
+def _cidade_e_uf(endereco: dict[str, Any]) -> str | None:
+    """Cidade e estado do endereço; macrorregião ("Nordeste") não entra como estado."""
+
+    regiao = endereco.get("addressRegion")
+    if isinstance(regiao, str) and normalizar(regiao).strip() in REGIOES_DO_BRASIL:
+        regiao = None
+    partes = [endereco.get("addressLocality"), regiao]
+    return ", ".join(str(p) for p in partes if p) or None
+
+
 def _endereco_jsonld(inv: InventarioPagina) -> str | None:
     endereco = _jsonld(inv, "jobLocation", "address")
     if isinstance(endereco, dict):
-        partes = [endereco.get("addressLocality"), endereco.get("addressRegion")]
-        return ", ".join(str(p) for p in partes if p) or None
+        return _cidade_e_uf(endereco)
     return endereco if isinstance(endereco, str) else None
 
 
@@ -961,11 +978,23 @@ def ler_vaga(
                 ),
             ),
             ("documento.jobLocation", lambda: _endereco_documento(documento)),
-            # Último recurso: o local escrito na própria descrição da vaga.
+            # Último recurso: o local escrito na própria descrição da vaga e,
+            # depois, a cidade no título ("Vendedor em Recife").
             ("descricao.local", lambda: interpretar_localizacao(texto_vaga or "", "descricao")),
+            ("titulo.local", lambda: cidade_do_titulo(titulo, "titulo")),
         ],
         validar=lambda v: validar_endereco(limpar_texto(str(v)) or ""),
     )
+    if endereco and not re.search(r",\s*[A-Z]{2}$", str(endereco)):
+        # Só a cidade ("Recife"): completa com a UF se o texto ou o título a trazem.
+        for leitura in (
+            interpretar_localizacao(texto_vaga or "", "descricao"),
+            cidade_do_titulo(titulo, "titulo"),
+        ):
+            valor = str(leitura.valor) if leitura else ""
+            if valor and normalizar(valor).startswith(normalizar(str(endereco)) + ","):
+                endereco = valor
+                break
     if endereco:
         local["address"] = limpar_texto(str(endereco))
     cep = _primeiro(
@@ -1202,14 +1231,7 @@ def _endereco_documento(documento: dict[str, Any]) -> str | None:
         local = local[0] if local else None
     endereco = (local or {}).get("address") if isinstance(local, dict) else None
     if isinstance(endereco, dict):
-        return (
-            ", ".join(
-                str(x)
-                for x in (endereco.get("addressLocality"), endereco.get("addressRegion"))
-                if x
-            )
-            or None
-        )
+        return _cidade_e_uf(endereco)
     return endereco if isinstance(endereco, str) else None
 
 

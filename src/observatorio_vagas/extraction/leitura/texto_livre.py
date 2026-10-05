@@ -279,6 +279,60 @@ _ROTULO_LOCAL = re.compile(
     r"cidade(?:\s*/\s*(?:uf|estado))?|lota[cç][aã]o|munic[ií]pio)\s*[:\-–]\s*(?P<valor>[^\n]{2,80})",
     re.IGNORECASE | re.MULTILINE,
 )
+# Rótulo no meio da linha ("Estágio Presencial Cidade: Presidente Prudente"):
+# só com dois-pontos, para não confundir com um hífen qualquer.
+_ROTULO_LOCAL_NO_MEIO = re.compile(
+    r"(?<=\s)(?:cidade|local(?:iza[cç][aã]o)?(?:\s+(?:de\s+trabalho|da\s+vaga))?)\s*:\s*"
+    r"(?P<valor>[^\n]{2,80})",
+    re.IGNORECASE,
+)
+# Próximo rótulo na mesma linha ("Presidente Prudente Bolsa: R$ 1.100") encerra o valor.
+_PROXIMO_ROTULO = re.compile(r"\s+[A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[a-zà-ÿ]+)?\s*:")
+# Macrorregiões não são UF ("Recife, Nordeste" no JSON-LD de algumas plataformas).
+REGIOES_DO_BRASIL = frozenset(
+    {"norte", "nordeste", "sul", "sudeste", "centro-oeste", "centro oeste", "centro"}
+)
+# Capitais e cidades grandes, para aceitar "Vendedor em Recife" no título sem UF.
+CIDADES_CONHECIDAS = frozenset(
+    {
+        "rio branco", "maceio", "macapa", "manaus", "salvador", "fortaleza", "brasilia",
+        "vitoria", "goiania", "sao luis", "cuiaba", "campo grande", "belo horizonte",
+        "belem", "joao pessoa", "curitiba", "recife", "teresina", "rio de janeiro", "natal",
+        "porto alegre", "porto velho", "boa vista", "florianopolis", "sao paulo", "aracaju",
+        "palmas", "guarulhos", "campinas", "sao goncalo", "duque de caxias",
+        "sao bernardo do campo", "nova iguacu", "santo andre", "osasco",
+        "jaboatao dos guararapes", "sao jose dos campos", "ribeirao preto", "uberlandia",
+        "sorocaba", "contagem", "juiz de fora", "feira de santana", "joinville", "londrina",
+        "aparecida de goiania", "niteroi", "ananindeua", "serra", "caxias do sul",
+        "campos dos goytacazes", "vila velha", "mogi das cruzes", "santos", "betim",
+        "diadema", "jundiai", "maringa", "montes claros", "piracicaba", "carapicuiba",
+        "olinda", "bauru", "anapolis", "sao jose do rio preto", "blumenau", "petropolis",
+        "uberaba", "caruaru", "vitoria da conquista", "cascavel", "ponta grossa", "franca",
+        "camacari", "barueri", "cotia", "palhoca", "itajai", "chapeco", "novo hamburgo",
+        "canoas", "pelotas", "santa maria", "gravatai", "sao leopoldo", "sao jose",
+    }
+)  # fmt: skip
+_CIDADE_NO_TITULO = re.compile(
+    rf"\b(?:em|para)\s+(?P<cidade>{_NOME_CIDADE})(?:\s*[-–/,]\s*(?P<uf>{_UFS}))?"
+    rf"\s*(?:[|\-–(]|$)"
+)
+
+
+def cidade_do_titulo(titulo: str, origem: str) -> Leitura | None:
+    """ "Vendedor em Recife" ou "Analista em Campinas - SP": cidade no título.
+
+    Sem UF, só aceita capitais e cidades grandes (evita "Analista em Tecnologia").
+    """
+
+    for achado in _CIDADE_NO_TITULO.finditer(titulo or ""):
+        cidade = _limpar_cidade(achado["cidade"])
+        if achado["uf"]:
+            return Leitura(f"{cidade}, {achado['uf']}", origem, achado.group().strip())
+        if normalizar(cidade) in CIDADES_CONHECIDAS:
+            return Leitura(cidade, origem, achado.group().strip())
+    return None
+
+
 _TITULOS_DE_LOCAL = {
     "local",
     "localizacao",
@@ -308,6 +362,7 @@ def _limpar_cidade(cidade: str) -> str:
 def _formatar_local(valor: str) -> str | None:
     """ "Camaçari - BA" -> "Camaçari, BA"; outro texto curto e capitalizado fica como está."""
 
+    valor = _PROXIMO_ROTULO.split(valor, maxsplit=1)[0]
     valor = " ".join(valor.replace("|", " ").split()).strip(" .;:-–")
     if not valor or _SO_MODALIDADE.match(valor):
         return None
@@ -327,6 +382,11 @@ def interpretar_localizacao(texto: str, origem: str) -> Leitura | None:
     """
 
     for achado in _ROTULO_LOCAL.finditer(texto):
+        local = _formatar_local(achado["valor"])
+        if local:
+            return Leitura(local, origem, achado.group().strip())
+
+    for achado in _ROTULO_LOCAL_NO_MEIO.finditer(texto):
         local = _formatar_local(achado["valor"])
         if local:
             return Leitura(local, origem, achado.group().strip())

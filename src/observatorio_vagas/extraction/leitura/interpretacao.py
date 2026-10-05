@@ -29,6 +29,7 @@ from observatorio_vagas.extraction.leitura.texto_livre import (
     interpretar_cnpj,
     interpretar_email_candidatura,
     interpretar_expiracao,
+    interpretar_localizacao,
     interpretar_modalidade,
     interpretar_nivel,
     interpretar_recrutador,
@@ -854,6 +855,8 @@ def ler_vaga(
                 ),
             ),
             ("documento.jobLocation", lambda: _endereco_documento(documento)),
+            # Último recurso: o local escrito na própria descrição da vaga.
+            ("descricao.local", lambda: interpretar_localizacao(texto_vaga or "", "descricao")),
         ],
         validar=lambda v: validar_endereco(limpar_texto(str(v)) or ""),
     )

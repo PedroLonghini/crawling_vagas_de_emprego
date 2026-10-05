@@ -44,7 +44,10 @@ from observatorio_vagas.extraction.json_publico import extrair_vagas_json_public
 from observatorio_vagas.extraction.leitura.aplicacao import CHAVE as CHAVE_LEITURA
 from observatorio_vagas.extraction.leitura.aplicacao import ler_anuncio
 from observatorio_vagas.extraction.leitura.camadas import montar_inventario
-from observatorio_vagas.extraction.listagem_carreiras import extrair_vagas_listagem_carreiras
+from observatorio_vagas.extraction.listagem_carreiras import (
+    atribuir_empresa_do_site,
+    extrair_vagas_listagem_carreiras,
+)
 from observatorio_vagas.extraction.mapeamento_json_ld import (
     converter_job_posting_em_anuncio,
 )
@@ -540,7 +543,13 @@ def _analisar_pagina(
         if resultado_empresas.dominio_reconhecido:
             documentos = resultado_empresas.vagas
         elif not documentos:
-            documentos = resultado_listagem_carreiras.vagas
+            documentos = atribuir_empresa_do_site(
+                resultado_listagem_carreiras.vagas,
+                url=registro.url_final,
+                empresa_nome=registro.empresa_nome,
+                corpo=corpo,
+                codificacao=(registro.codificacao or "utf-8"),
+            )
 
         # Páginas já descobertas como detalhes de vaga podem não
         # publicar JSON-LD. Nesse caso, usamos sinais HTML explícitos.

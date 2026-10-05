@@ -166,3 +166,40 @@ def test_expiracao():
         "Vaga válida até 20 de novembro", "corpo", referencia=hoje
     ).valor == date(2026, 11, 20)
     assert interpretar_expiracao("Publicada em 01/10/2026", "corpo", referencia=hoje) is None
+
+
+def _local(texto: str) -> str | None:
+    from observatorio_vagas.extraction.leitura.texto_livre import interpretar_localizacao
+
+    leitura = interpretar_localizacao(texto, "descricao")
+    return leitura.valor if leitura else None
+
+
+def test_local_com_rotulo_na_mesma_linha() -> None:
+    assert _local("Cargo: Operador\nLocal: Camaçari - BA\nTurno: noite") == "Camaçari, BA"
+    assert _local("Localização: Porto Alegre/RS") == "Porto Alegre, RS"
+    assert _local("Cidade: Curitiba") == "Curitiba"
+
+
+def test_local_em_titulo_sozinho_seguido_do_valor() -> None:
+    assert (
+        _local("Local\n\nCamaçari - BA\n\nRemoto\n\nResponsabilidades\n\n- Operar")
+        == "Camaçari, BA"
+    )
+
+
+def test_local_cidade_uf_no_inicio_do_texto() -> None:
+    assert _local("Vaga de analista em São Paulo - SP, com benefícios") == "São Paulo, SP"
+    assert _local("Atuação em Sapucaia do Sul/RS") == "Sapucaia do Sul, RS"
+
+
+def test_titulo_em_maiusculas_colado_na_cidade_fica_de_fora() -> None:
+    assert _local("AUXILIAR DE TELECOMUNICAÇÕES Panambi - RS") == "Panambi, RS"
+    assert _local("SÃO PAULO - SP") == "SÃO PAULO, SP"
+
+
+def test_nao_confunde_modalidade_nem_sigla_solta_com_local() -> None:
+    assert _local("Local: Remoto\nRequisitos: inglês") is None
+    assert _local("Conhecimento em TI SP e SQL, atender a LGPD e CLT PA") is None
+    assert _local("Sem nenhuma pista de local nesta vaga") is None
+    assert _local("") is None

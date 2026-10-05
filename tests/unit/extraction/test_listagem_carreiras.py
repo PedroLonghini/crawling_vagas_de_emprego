@@ -61,3 +61,72 @@ def test_menu_enorme_nao_e_lista_de_vagas() -> None:
     opcoes = "".join(f"<option>Cargo {n}</option>" for n in range(200))
 
     assert _titulos(f'<select id="cargo-pretendido">{opcoes}</select>') == []
+
+
+def _vagas(url: str, **argumentos):
+    from observatorio_vagas.extraction.listagem_carreiras import atribuir_empresa_do_site
+
+    html = (
+        b'<html><head><meta property="og:site_name" content="Tilibra"></head><body>'
+        b'<select id="cargo-pretendido"><option>Analista</option></select></body></html>'
+    )
+    vagas = extrair_vagas_listagem_carreiras(html, url=url).vagas
+    return atribuir_empresa_do_site(
+        vagas, url=url, empresa_nome=argumentos.get("empresa_nome", "Tilibra Ltda"), corpo=html
+    )
+
+
+def test_aba_trabalhe_conosco_herda_a_empresa_do_proprio_site() -> None:
+    vaga = _vagas("https://www.tilibra.com.br/trabalhe-conosco")[0]
+
+    assert vaga["hiringOrganization"]["name"] == "Tilibra"
+    assert vaga["hiringOrganization"]["sameAs"] == "https://tilibra.com.br"
+    assert vaga["_observatorio_empresa_origem"] == "site_proprio"
+
+
+def test_sem_og_site_name_usa_o_nome_do_catalogo() -> None:
+    from observatorio_vagas.extraction.listagem_carreiras import atribuir_empresa_do_site
+
+    html = b'<select id="cargo-pretendido"><option>Analista</option></select>'
+    url = "https://empresa.example/carreiras"
+    vagas = extrair_vagas_listagem_carreiras(html, url=url).vagas
+
+    resultado = atribuir_empresa_do_site(vagas, url=url, empresa_nome="Empresa Ltda", corpo=html)
+
+    assert resultado[0]["hiringOrganization"]["name"] == "Empresa Ltda"
+
+
+def test_agregador_consultoria_e_plataforma_nao_herdam_a_empresa() -> None:
+    for url in (
+        "https://www.michaelpage.com.br/jobs/barueri",
+        "https://www.jobijoba.com.br/vagas-emprego/x",
+        "https://app.talentbrand.com.br/jobs",
+        "https://jobs.lever.co/empresa/vagas",
+    ):
+        assert "hiringOrganization" not in _vagas(url)[0], url
+
+
+def test_pagina_que_nao_e_de_carreira_nao_herda_a_empresa() -> None:
+    assert "hiringOrganization" not in _vagas("https://empresa.example/produtos/valvulas")[0]
+
+
+def test_empresa_que_a_vaga_ja_traz_nao_e_trocada() -> None:
+    from observatorio_vagas.extraction.listagem_carreiras import atribuir_empresa_do_site
+
+    vaga = {"title": "Analista", "hiringOrganization": {"name": "Outra"}}
+
+    resultado = atribuir_empresa_do_site(
+        (vaga,), url="https://empresa.example/carreiras", empresa_nome="X", corpo=b""
+    )
+
+    assert resultado[0]["hiringOrganization"]["name"] == "Outra"
+
+
+def test_banco_de_talentos_e_marcadores_entre_colchetes_nao_sao_vagas() -> None:
+    html = (
+        '<select id="cargo-pretendido"><option>[lista_vagas_dinamica]</option>'
+        "<option>Banco de talentos (outras áreas)</option><option>Cadastre seu currículo</option>"
+        "<option>Engenheiro Eletricista</option></select>"
+    )
+
+    assert _titulos(html) == ["Engenheiro Eletricista"]

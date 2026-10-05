@@ -265,6 +265,89 @@ def interpretar_cnpj(texto: str, origem: str) -> Leitura | None:
     )
 
 
+_UFS = "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|SP|SE|TO"
+_PALAVRA_CIDADE = r"[A-ZÀ-Ý][\wÀ-ÿ'.]*"
+_NOME_CIDADE = rf"{_PALAVRA_CIDADE}(?:\s+(?:(?:d[aeo]s?|e)\s+)?{_PALAVRA_CIDADE}){{0,3}}"
+_CIDADE_UF = re.compile(
+    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*(?:[-–/,]|\s)\s*(?P<uf>{_UFS})(?![\wÀ-ÿ])"
+)
+_CIDADE_UF_COM_SEPARADOR = re.compile(
+    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*[-–/,]\s*(?P<uf>{_UFS})(?![\wÀ-ÿ])"
+)
+_ROTULO_LOCAL = re.compile(
+    r"^\s*(?:local(?:iza[cç][aã]o)?(?:\s+(?:de\s+trabalho|da\s+vaga|de\s+atua[cç][aã]o))?|"
+    r"cidade(?:\s*/\s*(?:uf|estado))?|lota[cç][aã]o|munic[ií]pio)\s*[:\-–]\s*(?P<valor>[^\n]{2,80})",
+    re.IGNORECASE | re.MULTILINE,
+)
+_TITULOS_DE_LOCAL = {
+    "local",
+    "localizacao",
+    "local de trabalho",
+    "local da vaga",
+    "local de atuacao",
+    "cidade",
+    "lotacao",
+    "municipio",
+}
+_SO_MODALIDADE = re.compile(
+    r"^(remot[oa]|presencial|h[ií]brid[oa]|home ?office|on-?site|remote|hybrid)\W*$", re.IGNORECASE
+)
+_JANELA_LOCAL_SEM_ROTULO = 1500
+
+
+def _limpar_cidade(cidade: str) -> str:
+    """Título em MAIÚSCULAS colado na cidade ("AUXILIAR DE TELECOM Panambi") fica de fora."""
+
+    palavras = cidade.split()
+    if all(p.isupper() for p in palavras):
+        return cidade
+    ultima = max((i for i, p in enumerate(palavras) if p.isupper() and len(p) > 3), default=-1)
+    return " ".join(palavras[ultima + 1 :]) or cidade
+
+
+def _formatar_local(valor: str) -> str | None:
+    """ "Camaçari - BA" -> "Camaçari, BA"; outro texto curto e capitalizado fica como está."""
+
+    valor = " ".join(valor.replace("|", " ").split()).strip(" .;:-–")
+    if not valor or _SO_MODALIDADE.match(valor):
+        return None
+    achado = _CIDADE_UF.search(valor)
+    if achado:
+        return f"{_limpar_cidade(achado['cidade'])}, {achado['uf']}"
+    if len(valor) <= 60 and valor[:1].isupper() and not re.search(r"[.!?]\s+\w", valor):
+        return valor
+    return None
+
+
+def interpretar_localizacao(texto: str, origem: str) -> Leitura | None:
+    """Local escrito na descrição: "Local: Camaçari - BA", título "Local" + linha, ou "Cidade - UF".
+
+    Ordem: rótulo na mesma linha, título sozinho seguido do valor, e por último o
+    primeiro "Cidade - UF" do início do texto (UF válida, para não pegar siglas soltas).
+    """
+
+    for achado in _ROTULO_LOCAL.finditer(texto):
+        local = _formatar_local(achado["valor"])
+        if local:
+            return Leitura(local, origem, achado.group().strip())
+
+    linhas = [linha.strip() for linha in texto.splitlines()]
+    for posicao, linha in enumerate(linhas):
+        if normalizar(linha).strip(" :.-") in _TITULOS_DE_LOCAL:
+            proxima = next((x for x in linhas[posicao + 1 : posicao + 4] if x), None)
+            local = _formatar_local(proxima) if proxima else None
+            if local:
+                return Leitura(local, origem, f"{linha} / {proxima}")
+
+    # Sem rótulo, só aceitamos o separador explícito ("Cidade - UF", "Cidade/UF", "Cidade, UF").
+    achado = _CIDADE_UF_COM_SEPARADOR.search(texto[:_JANELA_LOCAL_SEM_ROTULO])
+    if achado:
+        return Leitura(
+            f"{_limpar_cidade(achado['cidade'])}, {achado['uf']}", origem, achado.group()
+        )
+    return None
+
+
 def interpretar_cep(texto: str, origem: str) -> Leitura | None:
     """CEP só perto de palavras de endereço, para não pegar outros números."""
 

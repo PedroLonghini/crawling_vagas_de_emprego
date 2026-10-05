@@ -42,6 +42,82 @@ TEXTO_DE_COOKIES = re.compile(
     re.IGNORECASE | re.DOTALL,
 )
 
+# Tipos do JSON-LD que dizem o que a página É. Se ela se declara loja, produto,
+# evento, busca ou lista (e não tem JobPosting), não é uma vaga — ex.: a vitrine
+# "Últimas oportunidades" da C&A (ClothingStore + Event) virou vaga na rodada de
+# 05/10/2026.
+TIPOS_QUE_NAO_SAO_VAGA = frozenset(
+    {
+        "collectionpage",
+        "itemlist",
+        "searchresultspage",
+        "product",
+        "productgroup",
+        "offer",
+        "aggregateoffer",
+        "event",
+        "recipe",
+        "movie",
+        "realestatelisting",
+    }
+)
+# Store/LocalBusiness/Organization ficam de fora de propósito: muitos sites os
+# declaram em TODAS as páginas, inclusive na de carreiras.
+# Notícia ou post só vale como vaga se o título falar de vaga/contratação.
+TIPOS_EDITORIAIS = frozenset({"newsarticle", "article", "blogposting", "reportagenewsarticle"})
+TITULO_COM_VAGA = re.compile(
+    r"vaga|contrat|selecion|oportunidade|emprego|est[aá]gio|trainee|processo seletivo|admite|"
+    r"recrut|job|hiring|aprendiz",
+    re.IGNORECASE,
+)
+
+
+def tipos_json_ld(seletor: Selector) -> set[str]:
+    """Todos os @type declarados nos JSON-LD da página, em minúsculas."""
+
+    import json
+
+    tipos: set[str] = set()
+
+    def visitar(valor: Any) -> None:
+        if isinstance(valor, dict):
+            tipo = valor.get("@type")
+            for item in tipo if isinstance(tipo, list) else [tipo]:
+                if isinstance(item, str):
+                    tipos.add(item.casefold())
+            for filho in valor.values():
+                visitar(filho)
+        elif isinstance(valor, list):
+            for item in valor:
+                visitar(item)
+
+    for bloco in seletor.css('script[type="application/ld+json"]::text').getall():
+        try:
+            visitar(json.loads(bloco))
+        except ValueError:
+            continue
+    return tipos
+
+
+def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
+    """A própria página se declara outra coisa (loja, evento, lista, notícia sem vaga)."""
+
+    tipos = tipos_json_ld(seletor)
+    if "jobposting" in tipos:
+        return False
+    if tipos & TIPOS_QUE_NAO_SAO_VAGA:
+        return True
+    og_tipo = (seletor.css('meta[property="og:type"]::attr(content)').get() or "").casefold()
+    if og_tipo.startswith("product"):
+        return True
+    # og:type=article sozinho não conta: o WordPress marca TODA página assim (as 92
+    # vagas da Comdarpe têm og:type=article). Só o JSON-LD de notícia/post conta, e
+    # ainda assim a vaga vale se o título ou o endereço falarem de vaga.
+    if not tipos & TIPOS_EDITORIAIS:
+        return False
+    return not (TITULO_COM_VAGA.search(titulo) or TITULO_COM_VAGA.search(urlsplit(url).path))
+
+
 # Rótulos explícitos podem aparecer em parágrafos vizinhos. O seletor HTML
 # entrega alguns desses textos como uma sequência única; esta lista impede que
 # o valor de um campo absorva o rótulo do próximo.
@@ -502,6 +578,9 @@ def extrair_job_posting_html_generico(
         return ResultadoHTMLGenerico(vagas=())
 
     if TITULO_DE_LISTAGEM.search(titulo) or CAMINHO_EDITORIAL.search(urlsplit(url).path):
+        return ResultadoHTMLGenerico(vagas=())
+
+    if pagina_nao_e_vaga(seletor, titulo, url):
         return ResultadoHTMLGenerico(vagas=())
 
     if descricao is None or TEXTO_DE_COOKIES.search(descricao):

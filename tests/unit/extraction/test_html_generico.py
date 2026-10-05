@@ -320,3 +320,47 @@ def test_texto_de_cookies_nao_vale_como_descricao() -> None:
     cookies = "Necessary cookies are essential for the website to function. " * 5
 
     assert not _extrair("Analista", "https://empresa.example/vagas/1", cookies).vagas
+
+
+def _extrair_com_json_ld(
+    tipos: str,
+    titulo: str = "Analista Administrativo",
+    url: str = "https://empresa.example/vagas/1",
+):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f'<html><head><script type="application/ld+json">{tipos}</script>'
+        f"<title>{titulo}</title></head><body><h1>{titulo}</h1>"
+        f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="Empresa")
+
+
+def test_pagina_que_se_declara_loja_evento_ou_lista_nao_vira_vaga() -> None:
+    for tipos in (
+        '{"@type": ["ClothingStore", "Event"]}',
+        '{"@type": "CollectionPage"}',
+        '{"@graph": [{"@type": "ItemList"}]}',
+        '{"@type": "Product"}',
+    ):
+        assert not _extrair_com_json_ld(tipos).vagas, tipos
+
+
+def test_loja_ou_organizacao_no_site_inteiro_nao_derruba_a_vaga() -> None:
+    assert _extrair_com_json_ld('{"@type": "ClothingStore"}').vagas
+    assert _extrair_com_json_ld('{"@type": "Organization"}').vagas
+
+
+def test_noticia_so_vale_se_o_titulo_falar_de_vaga() -> None:
+    artigo = '{"@type": "NewsArticle"}'
+
+    url_noticia = "https://jornal.example/2026/09/calendario"
+    assert not _extrair_com_json_ld(artigo, "Eleições 2026: veja o calendário", url_noticia).vagas
+    assert _extrair_com_json_ld(artigo, "Cacau Show contrata operadora de loja", url_noticia).vagas
+    # Endereço de vaga também salva a notícia (ex.: /trabalhe-conosco/...).
+    assert _extrair_com_json_ld(artigo, "Operador de Máquina").vagas
+
+
+def test_jobposting_na_pagina_sempre_vale() -> None:
+    assert _extrair_com_json_ld('[{"@type": "Event"}, {"@type": "JobPosting"}]').vagas

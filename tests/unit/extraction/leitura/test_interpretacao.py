@@ -247,3 +247,62 @@ def test_expiracao_vem_do_documento_em_fonte_json():
     )
 
     assert leitura.campos["expireAt"] == "2026-10-30"
+
+
+PAGINA_COM_META_RESUMIDA = """<html><head>
+<meta name="description" content="Operador de máquina em Pindamonhangaba. A COMDARPE é uma empresa... Saiba mais.">
+</head><body><nav>Início | Vagas</nav>
+<h1>Operador de Máquina - Motoniveladora</h1>
+<p>Descrição de atividades:</p>
+<ul><li>Opera máquinas motoniveladoras em obras de terraplanagem.</li>
+<li>Realiza manutenção preventiva e inspeção diária do equipamento.</li>
+<li>Segue normas de segurança e registra as horas trabalhadas.</li></ul>
+<p>Requisitos: experiência comprovada e CNH categoria D.</p>
+<p>Cidade: Pindamonhangaba - SP</p>
+<p>Candidate-se pelo WhatsApp</p>
+<p>Vagas relacionadas: Ajudante geral</p>
+</body></html>"""
+
+
+def test_resumo_da_meta_da_lugar_ao_bloco_da_vaga_no_corpo():
+    url = "https://empresa.example/trabalhe-conosco/operador-de-maquina"
+    leitura = ler_vaga(
+        montar_inventario(PAGINA_COM_META_RESUMIDA.encode(), url=url),
+        titulo="Operador de Máquina - Motoniveladora",
+        id_externo="x1",
+        url_vaga=url,
+        documento={
+            "description": "Operador de máquina em Pindamonhangaba. A COMDARPE é uma "
+            "empresa... Saiba mais."
+        },
+    )
+
+    descricao = leitura.campos["description"]
+    assert "Realiza manutenção preventiva" in descricao
+    assert "Requisitos" in descricao
+    assert "Saiba mais" not in descricao
+    assert "Vagas relacionadas" not in descricao  # parou no fim do bloco
+    assert leitura.diagnostico["campos"]["description"]["origem"] == "corpo.bloco_da_vaga"
+
+
+def test_descricao_completa_do_documento_continua_valendo():
+    url = "https://empresa.example/vagas/2"
+    completa = "Atividades: atender clientes e organizar a agenda da equipe comercial. " * 6
+    leitura = ler_vaga(
+        montar_inventario(PAGINA_COM_META_RESUMIDA.encode(), url=url),
+        titulo="Operador de Máquina - Motoniveladora",
+        id_externo="x2",
+        url_vaga=url,
+        documento={"description": completa},
+    )
+
+    assert leitura.diagnostico["campos"]["description"]["origem"] == "documento.description"
+
+
+def test_lista_de_cards_no_corpo_nao_vira_descricao():
+    from observatorio_vagas.extraction.leitura.interpretacao import bloco_da_vaga
+
+    cards = ["Presencial", "Efetivo/CLT", "R$ 6.000,00 por mês", "Home-Office"] * 10
+    corpo = "\n".join(["Desenvolvedor .NET", *cards])
+
+    assert bloco_da_vaga(corpo, "Desenvolvedor .NET") is None

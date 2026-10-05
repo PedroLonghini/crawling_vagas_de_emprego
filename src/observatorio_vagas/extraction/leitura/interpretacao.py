@@ -396,6 +396,50 @@ def validar_descricao(texto: str) -> str | None:
     return None
 
 
+# Fim do bloco da vaga no corpo: botão de candidatura, compartilhar, vagas
+# relacionadas, rodapé legal. Comparado com a linha normalizada (sem acento).
+_FIM_DO_BLOCO = re.compile(
+    r"^(candidat|inscreva|compartilh|share|vagas? (relacionad|semelhant|similar|recentes)|"
+    r"outras vagas|veja tamb|leia tamb|newsletter|politica de privacidade|"
+    r"todos os direitos|copyright|©|outras pessoas tambem|voce tambem pode|quem viu esta|"
+    r"mais vagas|vagas em destaque|cadastre-se para|ocorreu um erro)"
+)
+_RESUMO = re.compile(r"(\.\.\.|…)\s*$|\b(saiba|leia|ver|veja) mais\W*$", re.IGNORECASE)
+TAMANHO_MAXIMO_RESUMO = 300
+TAMANHO_MAXIMO_BLOCO = 8000
+
+
+def parece_resumo(texto: str | None) -> bool:
+    """Texto curto ou cortado ("...", "Saiba mais"): típico de meta description."""
+
+    texto = (texto or "").strip()
+    return bool(texto) and (len(texto) < TAMANHO_MAXIMO_RESUMO or bool(_RESUMO.search(texto)))
+
+
+def bloco_da_vaga(texto_corpo: str, titulo: str) -> str | None:
+    """Texto do corpo entre o título da vaga e o fim dela (candidatura, rodapé...)."""
+
+    if not texto_corpo or not titulo:
+        return None
+    alvo = normalizar(titulo).strip()[:60]
+    linhas = texto_corpo.split("\n")
+    inicio = next((i for i, linha in enumerate(linhas) if alvo and alvo in normalizar(linha)), None)
+    if inicio is None:
+        return None
+    bloco: list[str] = []
+    for linha in linhas[inicio + 1 :]:
+        if _FIM_DO_BLOCO.match(normalizar(linha.strip())):
+            break
+        bloco.append(linha)
+    texto = "\n".join(bloco).strip()[:TAMANHO_MAXIMO_BLOCO]
+    # Lista de cards ("Presencial", "Efetivo/CLT", "R$ 6.000") não é texto de vaga:
+    # exige frases de verdade ocupando boa parte do bloco.
+    frases = [linha for linha in texto.split("\n") if len(linha.strip()) >= 40]
+    if len(frases) < 2 or sum(len(frase) for frase in frases) < 0.4 * len(texto):
+        return None
+    return texto or None
+
+
 def limpar_descricao(texto: str) -> str:
     """Remove linhas que são só texto de interface (cookies, ✕, destaque...)."""
 
@@ -639,8 +683,20 @@ def ler_vaga(
 
     # Texto completo da vaga para as regras de texto livre.
     descricao_doc = html_para_texto(documento.get("description"))
+    bloco = bloco_da_vaga(inv.texto_corpo, titulo)
+    # A descrição do documento costuma vir da meta description (resumo cortado em
+    # "...Saiba mais"). Se o corpo tem a vaga inteira, ele vale mais — e também é
+    # onde estão local, modalidade e salário escritos.
+    doc_e_resumo = (
+        bool(descricao_doc)
+        and parece_resumo(descricao_doc)
+        and bool(bloco)
+        and len(bloco) > 1.5 * len(descricao_doc)
+    )
     texto_vaga = (
-        (p["description"].valor if "description" in p else None) or descricao_doc or inv.texto_corpo
+        (p["description"].valor if "description" in p else None)
+        or (bloco if doc_e_resumo else descricao_doc)
+        or inv.texto_corpo
     )
     secoes = inv.secoes if inv.secoes else secoes_do_texto(texto_vaga or "")
     secoes_vaga = secoes_do_texto(texto_vaga or "")
@@ -832,7 +888,8 @@ def ler_vaga(
         [
             ("plataforma", plat("description")),
             ("json_ld.description", lambda: html_para_texto(_jsonld(inv, "description"))),
-            ("documento.description", descricao_doc),
+            ("documento.description", None if doc_e_resumo else descricao_doc),
+            ("corpo.bloco_da_vaga", bloco),
             ("corpo", lambda: inv.texto_corpo),
         ],
         validar=lambda v: validar_descricao(limpar_descricao(str(v))),

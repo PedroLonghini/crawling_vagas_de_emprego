@@ -222,3 +222,12 @@ def test_cidade_no_titulo() -> None:
     assert cidade("Operador em Sapucaia do Sul/RS (temporário)") == "Sapucaia do Sul, RS"
     assert cidade("Analista em Tecnologia") is None
     assert cidade("Vendedor em Loja de Shopping") is None
+    # "para" + UF é cargo, não cidade; nomes ambíguos sem UF ficam de fora.
+    assert cidade("Vaga para Cuidador de Idoso, SP") is None
+    assert cidade("Vendedor para Campinas - SP") == "Campinas, SP"
+    assert cidade("Vaga em São José") is None
+
+
+def test_uf_colada_e_rotulo_de_tres_palavras() -> None:
+    assert _local("Local: São Paulo, SPFormação: superior") == "São Paulo, SP"
+    assert _local("Cidade: São José do Rio Preto Turno da noite: sim") == "São José do Rio Preto"

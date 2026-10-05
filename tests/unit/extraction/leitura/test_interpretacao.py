@@ -366,6 +366,9 @@ def test_endereco_com_trecho_de_codigo_e_recusado():
     assert validar_endereco("/^(?:about")
     assert validar_endereco('<"')
     assert validar_endereco("Presidente Prudente, SP") is None
+    # Ponto e vírgula e abreviação são de endereço de verdade.
+    assert validar_endereco("Av. Paulista, 1000 (Bela Vista); São Paulo") is None
+    assert validar_endereco("Atuar no centro. Ter carro próprio")
 
 
 def _ler_local(json_ld: dict, titulo: str = "Motorista Logístico", corpo: str = "") -> str | None:

@@ -509,7 +509,7 @@ def limpar_descricao(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
 
 
-_SINAIS_DE_CODIGO = re.compile(r"[{}<>\\$`=;^]|window\.|function\b|=>|\(\?:")
+_SINAIS_DE_CODIGO = re.compile(r"[{}<\\$`=^]|window\.|function\b|=>|\(\?:")
 
 
 def validar_endereco(endereco: str) -> str | None:
@@ -520,7 +520,8 @@ def validar_endereco(endereco: str) -> str | None:
         return "mais de 100 caracteres"
     if endereco[:1].islower():
         return "começa no meio de palavra"
-    if re.search(r"[.!?]\s+\w", endereco) or len(endereco.split()) > 14:
+    # Abreviação ("Av. Paulista", "R. das Flores", "Jd. América") não é fim de frase.
+    if re.search(r"\w{4,}[.!?]\s+\w", endereco) or len(endereco.split()) > 14:
         return "parece frase da vaga"
     return None
 

@@ -287,7 +287,8 @@ _ROTULO_LOCAL_NO_MEIO = re.compile(
     re.IGNORECASE,
 )
 # Próximo rótulo na mesma linha ("Presidente Prudente Bolsa: R$ 1.100") encerra o valor.
-_PROXIMO_ROTULO = re.compile(r"\s+[A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[a-zà-ÿ]+)?\s*:")
+_PROXIMO_ROTULO = re.compile(r"\s+[A-ZÀ-Ý][\wÀ-ÿ]+(?:\s+[a-zà-ÿ]+){0,2}\s*:")
+_UF_COLADA = re.compile(rf"\b({_UFS})(?=[A-ZÀ-Ý][a-zà-ÿ])")
 # Macrorregiões não são UF ("Recife, Nordeste" no JSON-LD de algumas plataformas).
 REGIOES_DO_BRASIL = frozenset(
     {"norte", "nordeste", "sul", "sudeste", "centro-oeste", "centro oeste", "centro"}
@@ -303,13 +304,13 @@ CIDADES_CONHECIDAS = frozenset(
         "sao bernardo do campo", "nova iguacu", "santo andre", "osasco",
         "jaboatao dos guararapes", "sao jose dos campos", "ribeirao preto", "uberlandia",
         "sorocaba", "contagem", "juiz de fora", "feira de santana", "joinville", "londrina",
-        "aparecida de goiania", "niteroi", "ananindeua", "serra", "caxias do sul",
+        "aparecida de goiania", "niteroi", "ananindeua", "caxias do sul",
         "campos dos goytacazes", "vila velha", "mogi das cruzes", "santos", "betim",
         "diadema", "jundiai", "maringa", "montes claros", "piracicaba", "carapicuiba",
         "olinda", "bauru", "anapolis", "sao jose do rio preto", "blumenau", "petropolis",
         "uberaba", "caruaru", "vitoria da conquista", "cascavel", "ponta grossa", "franca",
         "camacari", "barueri", "cotia", "palhoca", "itajai", "chapeco", "novo hamburgo",
-        "canoas", "pelotas", "santa maria", "gravatai", "sao leopoldo", "sao jose",
+        "canoas", "pelotas", "santa maria", "gravatai", "sao leopoldo",
     }
 )  # fmt: skip
 _CIDADE_NO_TITULO = re.compile(
@@ -321,14 +322,16 @@ _CIDADE_NO_TITULO = re.compile(
 def cidade_do_titulo(titulo: str, origem: str) -> Leitura | None:
     """ "Vendedor em Recife" ou "Analista em Campinas - SP": cidade no título.
 
-    Sem UF, só aceita capitais e cidades grandes (evita "Analista em Tecnologia").
+    Sem UF, só aceita capitais e cidades grandes (evita "Analista em Tecnologia"). Com
+    UF, "para" só vale com cidade conhecida ("Vaga para Cuidador de Idoso, SP" é cargo).
     """
 
     for achado in _CIDADE_NO_TITULO.finditer(titulo or ""):
         cidade = _limpar_cidade(achado["cidade"])
-        if achado["uf"]:
+        conhecida = normalizar(cidade) in CIDADES_CONHECIDAS
+        if achado["uf"] and (conhecida or achado.group().lstrip().startswith("em")):
             return Leitura(f"{cidade}, {achado['uf']}", origem, achado.group().strip())
-        if normalizar(cidade) in CIDADES_CONHECIDAS:
+        if conhecida:
             return Leitura(cidade, origem, achado.group().strip())
     return None
 
@@ -362,8 +365,10 @@ def _limpar_cidade(cidade: str) -> str:
 def _formatar_local(valor: str) -> str | None:
     """ "Camaçari - BA" -> "Camaçari, BA"; outro texto curto e capitalizado fica como está."""
 
+    # UF colada no rótulo seguinte ("São Paulo, SPFormação:") é separada antes do corte.
+    valor = _UF_COLADA.sub(r"\1 ", valor)
     valor = _PROXIMO_ROTULO.split(valor, maxsplit=1)[0]
-    valor = " ".join(valor.replace("|", " ").split()).strip(" .;:-–")
+    valor = " ".join(valor.replace("|", " ").split()).strip(" .,;:-–")
     if not valor or _SO_MODALIDADE.match(valor):
         return None
     achado = _CIDADE_UF.search(valor)

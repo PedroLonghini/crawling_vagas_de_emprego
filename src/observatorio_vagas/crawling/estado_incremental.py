@@ -14,6 +14,7 @@ from scrapy.http import Response
 
 INTERVALO_SALVAMENTO_S = 30.0
 INTERVALO_FONTE_SEM_CANDIDATOS_DIAS = 7
+INTERVALO_FONTE_IMPRODUTIVA_DIAS = 30
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,9 +74,8 @@ class EstadoIncrementalLocal:
         self._registros[chave] = RegistroFonteIncremental(
             hash_conteudo=hash_conteudo,
             etag=etag or (anterior.etag if anterior else None),
-            ultima_modificacao=ultima_modificacao or (
-                anterior.ultima_modificacao if anterior else None
-            ),
+            ultima_modificacao=ultima_modificacao
+            or (anterior.ultima_modificacao if anterior else None),
         )
         self._salvar_se_passou_tempo()
         return anterior is not None and anterior.hash_conteudo == hash_conteudo
@@ -168,11 +168,18 @@ class EstadoIncrementalLocal:
             }
             return
         sem_novidades = 0 if detalhes_novos else int(anterior.get("sem_novidades", 0)) + 1
-        # Só reduz a frequência depois de três coletas completas sem novidade.
+        # Fonte que já rendeu vaga: só reduz a frequência depois de três coletas sem novidade.
         intervalo = 1 if sem_novidades < 3 else (3 if sem_novidades < 7 else 7)
+        if int(desempenho["detalhes_novos"]) == 0 and not detalhes_novos:
+            # Fonte que NUNCA rendeu nada (só 15% das fontes do teste de 10 mil rendiam):
+            # 7 dias nas primeiras tentativas e 30 dias depois de três sem resultado.
+            intervalo = (
+                INTERVALO_FONTE_SEM_CANDIDATOS_DIAS
+                if sem_novidades < 3
+                else INTERVALO_FONTE_IMPRODUTIVA_DIAS
+            )
         if sem_vagas_na_primeira_passada:
-            # Página que respondeu 2xx e não mostrou nenhum link de vaga: volta em 7 dias.
-            intervalo = INTERVALO_FONTE_SEM_CANDIDATOS_DIAS
+            intervalo = max(intervalo, INTERVALO_FONTE_SEM_CANDIDATOS_DIAS)
         self._agendamentos[alvo_id] = {
             "ultima_coleta": dia.isoformat(),
             "proxima_coleta": (dia + timedelta(days=intervalo)).isoformat(),
@@ -316,11 +323,19 @@ class EstadoIncrementalLocal:
                     else None
                 ),
             )
-        detalhes = {
-            alvo_id: {url for url in urls if isinstance(url, str) and url.startswith(("http://", "https://"))}
-            for alvo_id, urls in detalhes_brutos.items()
-            if isinstance(alvo_id, str) and isinstance(urls, list)
-        } if isinstance(detalhes_brutos, dict) else {}
+        detalhes = (
+            {
+                alvo_id: {
+                    url
+                    for url in urls
+                    if isinstance(url, str) and url.startswith(("http://", "https://"))
+                }
+                for alvo_id, urls in detalhes_brutos.items()
+                if isinstance(alvo_id, str) and isinstance(urls, list)
+            }
+            if isinstance(detalhes_brutos, dict)
+            else {}
+        )
         desempenhos: dict[str, dict[str, float | int]] = {}
         if isinstance(desempenhos_brutos, dict):
             for alvo_id, valor in desempenhos_brutos.items():
@@ -350,15 +365,19 @@ class EstadoIncrementalLocal:
                         "proxima_coleta": proxima,
                         "sem_novidades": max(sem_novidades, 0),
                     }
-        vistos = {
-            alvo_id: {
-                url: data
-                for url, data in urls.items()
-                if isinstance(url, str) and isinstance(data, str)
+        vistos = (
+            {
+                alvo_id: {
+                    url: data
+                    for url, data in urls.items()
+                    if isinstance(url, str) and isinstance(data, str)
+                }
+                for alvo_id, urls in vistos_brutos.items()
+                if isinstance(alvo_id, str) and isinstance(urls, dict)
             }
-            for alvo_id, urls in vistos_brutos.items()
-            if isinstance(alvo_id, str) and isinstance(urls, dict)
-        } if isinstance(vistos_brutos, dict) else {}
+            if isinstance(vistos_brutos, dict)
+            else {}
+        )
         return registros, detalhes, desempenhos, agendamentos, vistos
 
     def _salvar_se_passou_tempo(self) -> None:

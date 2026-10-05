@@ -19,6 +19,7 @@ from observatorio_vagas.crawling.catalog import (
     _normalizar_url_simples,
     carregar_alvos_csv_tolerante,
 )
+from observatorio_vagas.crawling.triagem_fontes import motivo_de_exclusao
 
 NOME_CATALOGO = "catalogo_fontes.csv"
 NOME_AUTORIZACOES = "fontes_autorizadas.csv"
@@ -62,6 +63,14 @@ def criar_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="permite substituir somente os três arquivos gerados no diretório de saída",
     )
+    parser.add_argument(
+        "--sem-triagem",
+        action="store_true",
+        help=(
+            "não rejeita URLs que inequivocamente não são páginas de vagas "
+            "(PDF e imagens, categorias de blog, artigos datados, listas editoriais)"
+        ),
+    )
     return parser
 
 
@@ -86,14 +95,14 @@ def _ler_urls(entrada: Path) -> tuple[tuple[int, str], ...]:
         return tuple(resultado)
 
     return tuple(
-        (numero, linha.strip())
-        for numero, linha in enumerate(linhas, start=1)
-        if linha.strip()
+        (numero, linha.strip()) for numero, linha in enumerate(linhas, start=1) if linha.strip()
     )
 
 
 def _normalizar_e_deduplicar(
     linhas: tuple[tuple[int, str], ...],
+    *,
+    triar: bool = True,
 ) -> tuple[tuple[str, ...], tuple[RejeicaoUrl, ...]]:
     """Remove repetidas e isola URLs malformadas antes de gerar arquivos."""
 
@@ -110,6 +119,11 @@ def _normalizar_e_deduplicar(
 
         if url in vistas:
             rejeitadas.append(RejeicaoUrl(numero, valor, "URL duplicada no arquivo de entrada"))
+            continue
+
+        motivo = motivo_de_exclusao(url) if triar else None
+        if motivo:
+            rejeitadas.append(RejeicaoUrl(numero, valor, f"triagem: {motivo}"))
             continue
 
         vistas.add(url)
@@ -132,11 +146,12 @@ def preparar_lote(
     entrada: Path,
     diretorio_saida: Path,
     substituir: bool,
+    triar: bool = True,
 ) -> tuple[int, int, Path]:
     """Gera o lote pronto e retorna total de aceitas, rejeitadas e relatório."""
 
     linhas = _ler_urls(entrada)
-    urls, rejeitadas_iniciais = _normalizar_e_deduplicar(linhas)
+    urls, rejeitadas_iniciais = _normalizar_e_deduplicar(linhas, triar=triar)
     diretorio_saida.mkdir(parents=True, exist_ok=True)
 
     catalogo = diretorio_saida / NOME_CATALOGO
@@ -162,8 +177,7 @@ def preparar_lote(
 
     urls_aprovadas = tuple(alvo.url_inicial for alvo in resultado.alvos)
     rejeitadas_politica = tuple(
-        RejeicaoUrl(falha.numero_linha, falha.alvo_id, falha.mensagem)
-        for falha in resultado.falhas
+        RejeicaoUrl(falha.numero_linha, falha.alvo_id, falha.mensagem) for falha in resultado.falhas
     )
     rejeitadas = (*rejeitadas_iniciais, *rejeitadas_politica)
 
@@ -199,6 +213,7 @@ def executar(argumentos: list[str] | None = None) -> int:
             entrada=opcoes.entrada.resolve(),
             diretorio_saida=opcoes.diretorio_saida.resolve(),
             substituir=opcoes.substituir,
+            triar=not opcoes.sem_triagem,
         )
     except ValueError as erro:
         print(f"ERRO: {erro}")

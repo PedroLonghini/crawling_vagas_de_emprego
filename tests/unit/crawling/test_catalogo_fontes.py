@@ -84,9 +84,7 @@ def test_catalogo_simples_isola_url_de_dominio_bloqueado(
 
     resultado = carregar_alvos_csv_tolerante(catalogo)
 
-    assert [alvo.url_inicial for alvo in resultado.alvos] == [
-        "https://empresa.example/carreiras"
-    ]
+    assert [alvo.url_inicial for alvo in resultado.alvos] == ["https://empresa.example/carreiras"]
     assert len(resultado.falhas) == 1
     assert resultado.falhas[0].numero_linha == 3
     assert "Catho" in resultado.falhas[0].mensagem
@@ -228,8 +226,12 @@ def test_start_preserva_contextos_que_usam_a_mesma_url(
 
     catalogo = escrever_catalogo(
         tmp_path,
-        ("empresa_um,Empresa Um,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"),
-        ("empresa_dois,Empresa Dois,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"),
+        (
+            "empresa_um,Empresa Um,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"
+        ),
+        (
+            "empresa_dois,Empresa Dois,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"
+        ),
     )
 
     spider = CatalogoFontesSpider(
@@ -500,3 +502,44 @@ def test_spider_informa_catalogo_inexistente(
         CatalogoFontesSpider(
             catalogo=str(caminho),
         )
+
+
+def test_limite_navegacao_vale_100_com_limite_de_anuncios_e_limita_a_primeira_requisicao(
+    tmp_path: Path,
+) -> None:
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,500,aprovada",
+    )
+
+    padrao = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200)
+    sem_limite = CatalogoFontesSpider(catalogo=str(catalogo))
+    manual = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200, limite_navegacao=30)
+    requisicoes = asyncio.run(coletar_requisicoes(manual))
+
+    assert padrao.limite_navegacao == 100
+    assert sem_limite.limite_navegacao is None
+    assert requisicoes[0].meta["observatorio_limite_paginas"] == 30
+
+
+def test_fonte_sem_nenhuma_vaga_nas_primeiras_paginas_e_encerrada(tmp_path: Path) -> None:
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,1,aprovada",
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200)
+
+    for _ in range(19):
+        spider._verificar_fonte_sem_vagas("a", candidatos_na_pagina=0, e_sitemap=False)
+    assert not spider.janela_publicacao.encerrada("a")
+    spider._verificar_fonte_sem_vagas("a", candidatos_na_pagina=0, e_sitemap=False)
+    assert spider.janela_publicacao.encerrada("a")
+
+    for _ in range(3):
+        spider._verificar_fonte_sem_vagas("b", candidatos_na_pagina=0, e_sitemap=True)
+    assert spider.janela_publicacao.encerrada("b")
+
+    spider._verificar_fonte_sem_vagas("c", candidatos_na_pagina=5, e_sitemap=False)
+    for _ in range(40):
+        spider._verificar_fonte_sem_vagas("c", candidatos_na_pagina=0, e_sitemap=False)
+    assert not spider.janela_publicacao.encerrada("c")

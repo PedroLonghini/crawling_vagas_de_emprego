@@ -88,6 +88,15 @@ if TYPE_CHECKING:
     from scrapy.http import Response
 
 
+# Páginas de listagem/sitemap por fonte quando há --limite-anuncios (mediana medida: 4,
+# p90: 27, p95: 72 nas fontes com 20+ vagas). Fontes grandes podem subir com
+# -a limite_navegacao=N.
+LIMITE_NAVEGACAO_PADRAO = 100
+# Fonte sem nenhum link de vaga depois de tantas páginas de navegação (ou sitemaps) para.
+PAGINAS_SEM_VAGAS_PARA_ENCERRAR = 20
+SITEMAPS_SEM_VAGAS_PARA_ENCERRAR = 3
+
+
 class CatalogoFontesSpider(Spider):
     """Coleta páginas iniciais e detalhes autorizados."""
 
@@ -136,6 +145,7 @@ class CatalogoFontesSpider(Spider):
         reler_detalhes_conhecidos: str | bool = False,
         usar_agendamento_inteligente: str | bool = True,
         janela_horas: str | int | None = None,
+        limite_navegacao: str | int | None = None,
         urls_conhecidas: str | None = None,
         *args: Any,
         **kwargs: Any,
@@ -232,6 +242,18 @@ class CatalogoFontesSpider(Spider):
         self.urls_listagem_agendadas: dict[str, set[str]] = {}
         self.detalhes_pendentes: dict[str, dict[str, None]] = {}
         self.navegacao_pendente: dict[str, dict[str, None]] = {}
+        # Orçamento de listagens e sitemaps por fonte. O --limite-anuncios só limita
+        # detalhes; sem isto cada fonte herdava 10.000 páginas de navegação (59% das
+        # páginas do teste de 10 mil foram sitemaps).
+        if limite_navegacao in (None, ""):
+            self.limite_navegacao = LIMITE_NAVEGACAO_PADRAO if self.limite_anuncios else None
+        else:
+            self.limite_navegacao = int(limite_navegacao)
+            if self.limite_navegacao < 1:
+                raise ValueError("limite_navegacao deve ser pelo menos 1")
+        self.candidatos_vistos: Counter[str] = Counter()
+        self.paginas_navegacao: Counter[str] = Counter()
+        self.sitemaps_vistos: Counter[str] = Counter()
         self.paginas_recebidas: Counter[str] = Counter()
         self.falhas_download: Counter[str] = Counter()
         self.candidatos_por_evidencia: dict[str, Counter[str]] = {}
@@ -413,6 +435,11 @@ class CatalogoFontesSpider(Spider):
                 )
                 continue
 
+            if self.limite_navegacao is not None:
+                requisicao.meta["observatorio_limite_paginas"] = min(
+                    requisicao.meta.get("observatorio_limite_paginas", self.limite_navegacao),
+                    self.limite_navegacao,
+                )
             self.urls_agendadas.setdefault(alvo.alvo_id, set()).add(requisicao.url)
             self.urls_listagem_agendadas.setdefault(alvo.alvo_id, set()).add(requisicao.url)
             if self.estado_incremental is not None:
@@ -672,6 +699,11 @@ class CatalogoFontesSpider(Spider):
             )
         urls_navegacao = [url for url in urls_navegacao if url not in self.urls_visitadas[alvo_id]]
         urls_detalhe = [url for url in urls_detalhe if url not in self.urls_visitadas[alvo_id]]
+        self._verificar_fonte_sem_vagas(
+            alvo_id,
+            candidatos_na_pagina=len(urls_detalhe) + len(candidatos),
+            e_sitemap=eh_resposta_sitemap(response),
+        )
 
         navegacao_pendente = self.navegacao_pendente.setdefault(alvo_id, {})
         for url in urls_navegacao:
@@ -781,13 +813,42 @@ class CatalogoFontesSpider(Spider):
         # Entrega as requisições aprovadas ao Scrapy.
         yield from requisicoes
 
+    def _verificar_fonte_sem_vagas(
+        self, alvo_id: str, *, candidatos_na_pagina: int, e_sitemap: bool
+    ) -> None:
+        """Para a fonte cujas primeiras páginas de navegação não mostram nenhuma vaga."""
+
+        self.candidatos_vistos[alvo_id] += candidatos_na_pagina
+        self.paginas_navegacao[alvo_id] += 1
+        if e_sitemap:
+            self.sitemaps_vistos[alvo_id] += 1
+        if self.candidatos_vistos[alvo_id] or self.janela_publicacao.encerrada(alvo_id):
+            return
+        if (
+            self.paginas_navegacao[alvo_id] >= PAGINAS_SEM_VAGAS_PARA_ENCERRAR
+            or self.sitemaps_vistos[alvo_id] >= SITEMAPS_SEM_VAGAS_PARA_ENCERRAR
+        ):
+            self.janela_publicacao.encerrar(alvo_id)
+            self.detalhes_pendentes.get(alvo_id, {}).clear()
+            self.navegacao_pendente.get(alvo_id, {}).clear()
+            self.logger.info(
+                "Fonte encerrada sem nenhuma vaga nas primeiras %s páginas: alvo_id=%s",
+                self.paginas_navegacao[alvo_id],
+                alvo_id,
+            )
+
     def closed(self, reason: str) -> None:
         """Distingue páginas realmente recebidas de URLs apenas agendadas."""
         if self.estado_incremental is not None:
             for alvo_id in self.urls_agendadas:
+                respondeu_ok = any(
+                    200 <= resultado.get("status_http", 0) < 300
+                    for resultado in self.resultados_download.get(alvo_id, {}).values()
+                )
                 self.estado_incremental.registrar_execucao(
                     alvo_id=alvo_id,
                     detalhes_novos=self.detalhes_novos[alvo_id],
+                    sem_candidatos=respondeu_ok and not self.candidatos_vistos[alvo_id],
                 )
             self.estado_incremental.salvar()
         for alvo_id, urls in self.urls_agendadas.items():

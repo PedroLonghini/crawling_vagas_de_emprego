@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
 from zoneinfo import ZoneInfo
 
-from scrapy.exceptions import IgnoreRequest
+from scrapy.exceptions import IgnoreRequest, NotSupported
 
 if TYPE_CHECKING:
     from scrapy import Request, Spider
@@ -109,7 +109,7 @@ def extrair_data_publicacao(response: Response) -> DataPublicacao | None:
 
     try:
         blocos = response.css("script[type='application/ld+json']::text").getall()
-    except (AttributeError, NotImplementedError):
+    except (AttributeError, NotImplementedError, NotSupported):
         return None
 
     for bloco in blocos:
@@ -200,6 +200,11 @@ class JanelaPublicacao:
         if self._seguidas[alvo_id] >= self.velhas_seguidas_para_encerrar:
             self._encerradas.add(alvo_id)
         return True
+
+    def encerrar(self, alvo_id: str) -> None:
+        """Encerra a fonte por outro motivo (por exemplo, nada de útil nas primeiras páginas)."""
+
+        self._encerradas.add(alvo_id)
 
     def sem_data(self, alvo_id: str) -> bool:
         """A fonte nunca mostrou data nas primeiras vagas lidas?"""

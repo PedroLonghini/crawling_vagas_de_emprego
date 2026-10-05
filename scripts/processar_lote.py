@@ -229,6 +229,16 @@ def criar_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--limite-navegacao",
+        type=int,
+        default=None,
+        help=(
+            "máximo de páginas de listagem e sitemap por fonte (padrão: 100 quando há "
+            "--limite-anuncios). Sem isso cada fonte podia ler até 10.000 páginas."
+        ),
+    )
+
+    parser.add_argument(
         "--janela-horas",
         type=int,
         default=None,
@@ -469,6 +479,7 @@ def _executar_crawler(
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
@@ -504,6 +515,7 @@ def _executar_crawler(
             # retomado pelo estado incremental na próxima rodada.
             *(("-s", f"CLOSESPIDER_TIMEOUT={tempo_maximo}") if tempo_maximo else ()),
             *(("-a", f"janela_horas={janela_horas}") if janela_horas else ()),
+            *(("-a", f"limite_navegacao={limite_navegacao}") if limite_navegacao else ()),
             *(("-a", f"urls_conhecidas={urls_conhecidas}") if urls_conhecidas else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
             # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
@@ -616,6 +628,7 @@ def _coletar_em_blocos(
     diretorio_estado: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
@@ -638,6 +651,7 @@ def _coletar_em_blocos(
             estado_incremental=_arquivo_estado(diretorio_estado, ativas[0][0]),
             tempo_maximo=tempo_maximo,
             janela_horas=janela_horas,
+            limite_navegacao=limite_navegacao,
             urls_conhecidas=urls_conhecidas,
         )
 
@@ -655,6 +669,7 @@ def _coletar_em_blocos(
                 estado_incremental=_arquivo_estado(diretorio_estado, numero),
                 tempo_maximo=tempo_maximo,
                 janela_horas=janela_horas,
+                limite_navegacao=limite_navegacao,
                 urls_conhecidas=urls_conhecidas,
             ): numero
             for numero, fila in ativas
@@ -748,6 +763,7 @@ def _coletar_fila_em_blocos(
     estado_incremental: Path | None = None,
     tempo_maximo: int | None = None,
     janela_horas: int | None = None,
+    limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
@@ -777,6 +793,7 @@ def _coletar_fila_em_blocos(
                 estado_incremental=estado_incremental,
                 tempo_maximo=tempo_maximo,
                 janela_horas=janela_horas,
+                limite_navegacao=limite_navegacao,
                 urls_conhecidas=urls_conhecidas,
                 javascript=javascript,
                 catalogo=caminho_bloco,
@@ -810,6 +827,7 @@ def _coletar_fila_em_blocos(
                     estado_incremental=estado_incremental,
                     tempo_maximo=tempo_maximo,
                     janela_horas=janela_horas,
+                    limite_navegacao=limite_navegacao,
                     urls_conhecidas=urls_conhecidas,
                     javascript=javascript,
                     catalogo=caminho_alvo,
@@ -1247,6 +1265,10 @@ def executar(
         print("ERRO: alvos-por-coleta deve estar entre 1 e 2000")
         return 2
 
+    if opcoes.limite_navegacao is not None and opcoes.limite_navegacao < 1:
+        print("ERRO: limite-navegacao deve ser pelo menos 1")
+        return 2
+
     if opcoes.janela_horas is not None and opcoes.janela_horas < 1:
         print("ERRO: janela-horas deve ser pelo menos 1")
         return 2
@@ -1347,6 +1369,7 @@ def executar(
             processos=opcoes.processos_coleta,
             tempo_maximo=(opcoes.tempo_maximo_bloco * 60 if opcoes.tempo_maximo_bloco else None),
             janela_horas=opcoes.janela_horas,
+            limite_navegacao=opcoes.limite_navegacao,
             urls_conhecidas=urls_conhecidas,
             **(
                 {"limite_anuncios": opcoes.limite_anuncios}

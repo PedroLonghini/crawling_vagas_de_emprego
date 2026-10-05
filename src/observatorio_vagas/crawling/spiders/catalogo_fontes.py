@@ -24,7 +24,7 @@ from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregat
 from observatorio_vagas.crawling.janela_publicacao import (
     JanelaPublicacao,
     carregar_urls_conhecidas,
-    dominio_de,
+    chave_de_bloqueio,
     extrair_data_publicacao,
 )
 from observatorio_vagas.crawling.paginacao import descobrir_paginacao, eh_link_listagem
@@ -892,7 +892,9 @@ class CatalogoFontesSpider(Spider):
     def _contar_bloqueio(self, response: Response) -> None:
         """403/429 seguidos de um domínio: para de pedir a ele nesta coleta."""
 
-        dominio = dominio_de(response.url)
+        # URL final (depois de redirect): o redirect passa de novo pelo middleware,
+        # que corta pela mesma chave.
+        dominio = chave_de_bloqueio(response.url)
         if not dominio:
             return
         if response.status in STATUS_DE_BLOQUEIO:

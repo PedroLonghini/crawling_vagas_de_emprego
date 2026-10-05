@@ -666,3 +666,16 @@ def test_dominio_que_responde_403_seguidos_para_de_ser_pedido(tmp_path: Path) ->
     with pytest.raises(IgnoreRequest):
         middleware.process_request(Request("https://www.empresa.example/v/99"), spider)
     middleware.process_request(Request("https://outra.example/v/1"), spider)
+
+
+def test_host_compartilhado_bloqueia_so_a_organizacao_que_recusou(tmp_path: Path) -> None:
+    from observatorio_vagas.crawling.spiders.catalogo_fontes import BLOQUEIOS_SEGUIDOS_PARA_PARAR
+
+    spider, _ = criar_spider_e_requisicao(tmp_path, limite_paginas=25)
+    for n in range(BLOQUEIOS_SEGUIDOS_PARA_PARAR):
+        spider._contar_bloqueio(
+            HtmlResponse(url=f"https://www.gov.br/orgao-a/vagas/{n}", status=403)
+        )
+
+    assert "gov.br/orgao-a" in spider.dominios_bloqueados
+    assert "gov.br" not in spider.dominios_bloqueados

@@ -262,6 +262,31 @@ def dominio_de(url: str) -> str:
     return (urlsplit(url).hostname or "").casefold().removeprefix("www.")
 
 
+# Hosts que abrigam muitas organizações diferentes: um 403 de uma não pode parar as
+# outras. Neles o bloqueio conta por host + primeiro trecho do caminho.
+HOSTS_COMPARTILHADOS = frozenset(
+    {
+        "gov.br",
+        "jobs.lever.co",
+        "jobs.smartrecruiters.com",
+        "linkedin.com",
+        "sites.google.com",
+        "boards.greenhouse.io",
+        "apply.workable.com",
+    }
+)
+
+
+def chave_de_bloqueio(url: str) -> str:
+    """Unidade que o disjuntor de 403 desliga: o host, ou host/1º trecho se compartilhado."""
+
+    dominio = dominio_de(url)
+    if dominio in HOSTS_COMPARTILHADOS:
+        primeiro = next((parte for parte in urlsplit(url).path.split("/") if parte), "")
+        return f"{dominio}/{primeiro.casefold()}"
+    return dominio
+
+
 def carregar_urls_conhecidas(caminho: Path | None) -> frozenset[str]:
     """Lê o arquivo (uma URL por linha) com as vagas já gravadas no MongoDB."""
 
@@ -288,7 +313,7 @@ class EncerramentoPorIdadeDownloaderMiddleware:
         janela: JanelaPublicacao | None = getattr(spider, "janela_publicacao", None)
         alvo_id = request.meta.get("observatorio_alvo_id")
 
-        if dominio_de(request.url) in getattr(spider, "dominios_bloqueados", ()):
+        if chave_de_bloqueio(request.url) in getattr(spider, "dominios_bloqueados", ()):
             self._crawler.stats.inc_value("observatorio/janela/dominio_bloqueado")
             raise IgnoreRequest("o domínio está recusando o robô (403/429 seguidos)")
 

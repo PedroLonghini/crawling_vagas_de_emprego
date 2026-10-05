@@ -416,28 +416,77 @@ def parece_resumo(texto: str | None) -> bool:
     return bool(texto) and (len(texto) < TAMANHO_MAXIMO_RESUMO or bool(_RESUMO.search(texto)))
 
 
+_AUTOR_E_DATA = re.compile(r"^(por|publicad[oa]|postad[oa])\b.{0,60}\d{4}\s*$")
+_TITULO_GENERICO = re.compile(r"^(tag|categoria|arquivo|vagas? de emprego)\b|^\d[\d.]*\s+vagas")
+TAMANHO_MINIMO_TITULO = 8
+TAMANHO_MAXIMO_LINHA_DE_FIM = 40
+REPETICOES_QUE_INDICAM_LISTAGEM = 3
+
+
+LINHAS_ATE_O_TEXTO = 15
+
+
+def _linha_do_titulo(linhas: list[str], alvo: str) -> int | None:
+    """Ocorrência do título que é seguida de texto de verdade (e não a do menu ou formulário).
+
+    Prefere as linhas que SÃO o título; entre elas (ou entre as que o contêm), a primeira
+    que tem uma frase longa logo abaixo.
+    """
+
+    normalizadas = [normalizar(linha).strip(" -–|:") for linha in linhas]
+    exatas = [i for i, linha in enumerate(normalizadas) if linha == alvo]
+    candidatas = exatas or [i for i, linha in enumerate(normalizadas) if alvo in linha]
+    for indice in candidatas:
+        seguintes = linhas[indice + 1 : indice + 1 + LINHAS_ATE_O_TEXTO]
+        if any(len(linha.strip()) >= 80 for linha in seguintes):
+            return indice
+    return candidatas[0] if candidatas else None
+
+
 def bloco_da_vaga(texto_corpo: str, titulo: str) -> str | None:
     """Texto do corpo entre o título da vaga e o fim dela (candidatura, rodapé...)."""
 
     if not texto_corpo or not titulo:
         return None
-    alvo = normalizar(titulo).strip()[:60]
+    alvo = normalizar(html_mod.unescape(titulo)).strip(" -–|:")[:60]
+    # Título curto ("Tag:", "Vendedor") casa com qualquer linha; título genérico é
+    # de listagem.
+    if len(alvo) < TAMANHO_MINIMO_TITULO or _TITULO_GENERICO.match(alvo):
+        return None
     linhas = texto_corpo.split("\n")
-    inicio = next((i for i, linha in enumerate(linhas) if alvo and alvo in normalizar(linha)), None)
+    inicio = _linha_do_titulo(linhas, alvo)
     if inicio is None:
         return None
     bloco: list[str] = []
+    achou_fim = False
     for linha in linhas[inicio + 1 :]:
-        if _FIM_DO_BLOCO.match(normalizar(linha.strip())):
+        limpa = linha.strip()
+        normalizada = normalizar(limpa)
+        # Marcador de fim só em linha curta (botão, rodapé): "Candidatos interessados
+        # enviar currículo para..." é parte da vaga.
+        if len(limpa) <= TAMANHO_MAXIMO_LINHA_DE_FIM and _FIM_DO_BLOCO.match(normalizada):
+            achou_fim = True
             break
+        # No começo do bloco: pula o título repetido (breadcrumb + h1) e "Por: Fulano - data".
+        if not bloco and (
+            not limpa or normalizada.strip(" -–|:") == alvo or _AUTOR_E_DATA.match(normalizada)
+        ):
+            continue
         bloco.append(linha)
-    texto = "\n".join(bloco).strip()[:TAMANHO_MAXIMO_BLOCO]
+    texto = "\n".join(bloco).strip()
+    # Sem fim e grande demais: é listagem (cards até o rodapé), não uma vaga.
+    if not achou_fim and len(texto) > TAMANHO_MAXIMO_BLOCO:
+        return None
+    # O mesmo botão várias vezes ("Se candidatar") = vários cards.
+    botoes = sum(1 for linha in bloco if re.match(r"^\s*(se )?candidat", normalizar(linha)))
+    if botoes >= REPETICOES_QUE_INDICAM_LISTAGEM:
+        return None
     # Lista de cards ("Presencial", "Efetivo/CLT", "R$ 6.000") não é texto de vaga:
     # exige frases de verdade ocupando boa parte do bloco.
     frases = [linha for linha in texto.split("\n") if len(linha.strip()) >= 40]
     if len(frases) < 2 or sum(len(frase) for frase in frases) < 0.4 * len(texto):
         return None
-    return texto or None
+    return texto[:TAMANHO_MAXIMO_BLOCO] or None
 
 
 def limpar_descricao(texto: str) -> str:

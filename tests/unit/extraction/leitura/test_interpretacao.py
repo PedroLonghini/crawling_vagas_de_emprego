@@ -306,3 +306,56 @@ def test_lista_de_cards_no_corpo_nao_vira_descricao():
     corpo = "\n".join(["Desenvolvedor .NET", *cards])
 
     assert bloco_da_vaga(corpo, "Desenvolvedor .NET") is None
+
+
+FRASE = "Realizar inspeções visuais e dimensionais em produtos acabados conforme as normas."
+
+
+def test_bloco_comeca_no_titulo_seguido_de_texto_e_pula_autor_e_titulo_repetido():
+    from observatorio_vagas.extraction.leitura.interpretacao import bloco_da_vaga
+
+    corpo = "\n".join(
+        [
+            "Início > Vagas > Inspetor de Qualidade",
+            "Inspetor de Qualidade",
+            "Por: Admin - 22 de Setembro de 2026",
+            FRASE,
+            FRASE,
+            "Candidate-se",
+            "Formulário",
+            "Inspetor de Qualidade",
+        ]
+    )
+
+    bloco = bloco_da_vaga(corpo, "Inspetor de Qualidade")
+
+    assert bloco is not None and bloco.startswith("Realizar inspeções")
+    assert "Por: Admin" not in bloco and "Formulário" not in bloco
+
+
+def test_titulo_curto_ou_generico_nao_gera_bloco():
+    from observatorio_vagas.extraction.leitura.interpretacao import bloco_da_vaga
+
+    corpo = "\n".join(["Tag: vagas", FRASE, FRASE, FRASE])
+
+    assert bloco_da_vaga(corpo, "Tag:") is None
+    assert bloco_da_vaga(corpo, "Vagas de emprego Vendedor em São Paulo") is None
+
+
+def test_listagem_sem_marcador_de_fim_e_enorme_nao_gera_bloco():
+    from observatorio_vagas.extraction.leitura.interpretacao import bloco_da_vaga
+
+    corpo = "\n".join(["Analista de Marketing Digital", *([FRASE] * 200)])
+
+    assert bloco_da_vaga(corpo, "Analista de Marketing Digital") is None
+
+
+def test_frase_que_comeca_com_candidatos_nao_encerra_o_bloco():
+    from observatorio_vagas.extraction.leitura.interpretacao import bloco_da_vaga
+
+    contato = "Candidatos interessados devem enviar currículo para rh@empresa.example até sexta."
+    corpo = "\n".join(["Analista de Marketing Digital", FRASE, contato, FRASE, "Compartilhar"])
+
+    bloco = bloco_da_vaga(corpo, "Analista de Marketing Digital")
+
+    assert bloco is not None and "rh@empresa.example" in bloco

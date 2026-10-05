@@ -543,3 +543,40 @@ def test_fonte_sem_nenhuma_vaga_nas_primeiras_paginas_e_encerrada(tmp_path: Path
     for _ in range(40):
         spider._verificar_fonte_sem_vagas("c", candidatos_na_pagina=0, e_sitemap=False)
     assert not spider.janela_publicacao.encerrada("c")
+
+
+def test_lista_esgotada_tira_da_fila_so_os_detalhes_seguintes_e_as_paginas_dela(
+    tmp_path: Path,
+) -> None:
+    from scrapy import Request
+
+    from observatorio_vagas.crawling.janela_publicacao import DataPublicacao
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,500,aprovada",
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200, janela_horas=24)
+    spider.detalhes_pendentes["a"] = {
+        "https://aprovada.example/vaga/3": ("L", 3),
+        "https://aprovada.example/vaga/4": ("L", 4),
+        "https://aprovada.example/vaga/9": ("M", 0),
+    }
+    spider.navegacao_pendente["a"] = {
+        "https://aprovada.example/carreiras?p=2": "L",
+        "https://aprovada.example/outra?p=2": "M",
+    }
+    from datetime import UTC, datetime
+
+    velha = DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True)
+    for posicao in (0, 1, 2):
+        spider.janela_publicacao.registrar("a", velha, lista="L", posicao=posicao)
+
+    spider._podar_lista_esgotada("a", "L")
+
+    assert list(spider.detalhes_pendentes["a"]) == ["https://aprovada.example/vaga/9"]
+    assert list(spider.navegacao_pendente["a"]) == ["https://aprovada.example/outra?p=2"]
+
+    pedido = Request("https://aprovada.example/vaga/9")
+    spider._marcar_origem_detalhe(pedido, ("M", 0))
+    assert (pedido.meta["observatorio_lista"], pedido.meta["observatorio_posicao"]) == ("M", 0)

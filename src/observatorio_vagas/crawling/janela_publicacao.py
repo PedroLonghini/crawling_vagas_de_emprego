@@ -151,22 +151,28 @@ def esta_velha(
 
 @dataclass(slots=True)
 class JanelaPublicacao:
-    """Controla, por fonte, quando a coleta deve parar.
+    """Decide o que ainda vale baixar de cada fonte.
 
-    Duas regras encerram uma fonte:
-    - com ``horas``: vagas velhas seguidas (a data está na página);
-    - sem data na página: a primeira vaga que já está gravada no MongoDB.
-    Fontes sem data também ficam limitadas às primeiras listagens.
+    - Vaga velha (fora da janela) ou já gravada é descartada uma a uma.
+    - Uma LISTAGEM fica esgotada quando 3 vagas seguidas, na ordem em que aparecem
+      nela, são velhas: o resto daquela listagem (e as páginas seguintes dela) é mais
+      antigo. Antes isso encerrava a FONTE inteira pela ordem de chegada das
+      respostas, que é concorrente, e jogava fora vagas novas de outras listagens
+      (perda medida na rodada de 05/10/2026: 12 fontes, ~500 URLs com cara de vaga).
+    - A fonte inteira só é encerrada por ``encerrar`` (nenhum link de vaga nas
+      primeiras páginas).
+    - Fontes sem data ficam limitadas às primeiras listagens.
     """
 
     horas: int | None = None
     velhas_seguidas_para_encerrar: int = VELHAS_SEGUIDAS_PARA_ENCERRAR
     leituras_sem_data_para_classificar: int = LEITURAS_SEM_DATA
     listagens_sem_data: int = LISTAGENS_SEM_DATA
-    _seguidas: dict[str, int] = field(default_factory=dict)
     _encerradas: set[str] = field(default_factory=set)
     _sem_data: dict[str, int] = field(default_factory=dict)
     _com_data: set[str] = field(default_factory=set)
+    _velhas_por_lista: dict[str, dict[int, bool]] = field(default_factory=dict)
+    _esgotada_desde: dict[str, int] = field(default_factory=dict)
 
     def registrar(
         self,
@@ -175,34 +181,55 @@ class JanelaPublicacao:
         *,
         conhecida: bool = False,
         agora: datetime | None = None,
+        lista: str | None = None,
+        posicao: int | None = None,
     ) -> bool:
         """Registra uma vaga lida; devolve ``True`` se ela deve ser descartada."""
 
         if data is None:
             self._sem_data[alvo_id] = self._sem_data.get(alvo_id, 0) + 1
-            if conhecida:
-                # Sem data, a única pista de que acabaram as novas é já
-                # termos esta vaga: o resto da fonte é antigo.
-                self._encerradas.add(alvo_id)
-                return True
-            return False
+            return conhecida
 
         self._com_data.add(alvo_id)
 
         if self.horas is None:
-            return False
+            return conhecida
 
-        if not esta_velha(data, horas=self.horas, agora=agora):
-            self._seguidas[alvo_id] = 0
-            return False
+        velha = esta_velha(data, horas=self.horas, agora=agora)
+        if lista is not None and posicao is not None:
+            self._registrar_na_lista(lista, posicao, velha)
+        return velha or conhecida
 
-        self._seguidas[alvo_id] = self._seguidas.get(alvo_id, 0) + 1
-        if self._seguidas[alvo_id] >= self.velhas_seguidas_para_encerrar:
-            self._encerradas.add(alvo_id)
-        return True
+    def _registrar_na_lista(self, lista: str, posicao: int, velha: bool) -> None:
+        if lista in self._esgotada_desde:
+            return
+        resultados = self._velhas_por_lista.setdefault(lista, {})
+        resultados[posicao] = velha
+        seguidas = self.velhas_seguidas_para_encerrar
+        posicoes = sorted(resultados)
+        for indice, inicio in enumerate(posicoes):
+            trecho = posicoes[indice : indice + seguidas]
+            if len(trecho) < seguidas or trecho != list(range(inicio, inicio + seguidas)):
+                continue
+            if not all(resultados[p] for p in trecho):
+                continue
+            # Uma vaga nova DEPOIS do trecho indica que a lista não está em ordem
+            # de data; nesse caso não esgotamos nada.
+            if any(not resultados[p] for p in posicoes if p > inicio):
+                continue
+            self._esgotada_desde[lista] = inicio + seguidas
+            return
+
+    def limite_da_lista(self, lista: str | None) -> int | None:
+        """Primeira posição que não vale mais baixar nesta listagem (ou ``None``)."""
+
+        return self._esgotada_desde.get(lista) if lista else None
+
+    def lista_esgotada(self, lista: str | None) -> bool:
+        return bool(lista) and lista in self._esgotada_desde
 
     def encerrar(self, alvo_id: str) -> None:
-        """Encerra a fonte por outro motivo (por exemplo, nada de útil nas primeiras páginas)."""
+        """Encerra a fonte inteira (por exemplo, nada de útil nas primeiras páginas)."""
 
         self._encerradas.add(alvo_id)
 
@@ -253,7 +280,16 @@ class EncerramentoPorIdadeDownloaderMiddleware:
 
         if janela.encerrada(alvo_id):
             self._crawler.stats.inc_value("observatorio/janela/requisicoes_descartadas")
-            raise IgnoreRequest("fonte encerrada: o restante já é antigo ou conhecido")
+            raise IgnoreRequest("fonte encerrada: nenhum link de vaga nas primeiras páginas")
+
+        limite = janela.limite_da_lista(request.meta.get("observatorio_lista"))
+        posicao = request.meta.get("observatorio_posicao")
+        if limite is not None and isinstance(posicao, int) and posicao >= limite:
+            self._crawler.stats.inc_value("observatorio/janela/requisicoes_descartadas")
+            raise IgnoreRequest("listagem esgotada: as vagas seguintes são mais antigas")
+        if janela.lista_esgotada(request.meta.get("observatorio_lista_origem")):
+            self._crawler.stats.inc_value("observatorio/janela/requisicoes_descartadas")
+            raise IgnoreRequest("página seguinte de uma listagem esgotada")
 
         numero_pagina = request.meta.get("observatorio_numero_pagina")
         if (

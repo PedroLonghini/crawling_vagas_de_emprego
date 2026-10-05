@@ -260,6 +260,7 @@ class CatalogoFontesSpider(Spider):
         self.respostas_listagem: dict[str, Response] = {}
         self.detalhes_reaproveitados: Counter[str] = Counter()
         self.detalhes_novos: Counter[str] = Counter()
+        self.detalhes_ja_gravados: Counter[str] = Counter()
 
         # O OffsiteMiddleware do Scrapy também bloqueará
         # domínios que não aparecem nesta lista.
@@ -345,10 +346,11 @@ class CatalogoFontesSpider(Spider):
                 requisicao.errback = self.tratar_falha_download
                 if requisicao.url in navegacao:
                     requisicao.meta["observatorio_tipo_pagina"] = "inicial"
+                    requisicao.meta["observatorio_lista_origem"] = navegacao.get(requisicao.url)
                     listagens.add(requisicao.url)
                     navegacao.pop(requisicao.url, None)
                 else:
-                    pendentes.pop(requisicao.url, None)
+                    self._marcar_origem_detalhe(requisicao, pendentes.pop(requisicao.url, None))
                 self.crawler.engine.crawl(requisicao)
                 retomadas += 1
         if retomadas:
@@ -502,17 +504,17 @@ class CatalogoFontesSpider(Spider):
             response.meta.get("observatorio_tipo_pagina") == "detalhe_vaga"
             and 200 <= response.status < 300
         ):
+            lista = response.meta.get("observatorio_lista")
+            esgotada_antes = self.janela_publicacao.lista_esgotada(lista)
             descartar = self.janela_publicacao.registrar(
                 alvo_id,
                 extrair_data_publicacao(response),
                 conhecida=normalizar_url_vaga(response.request.url) in self.urls_conhecidas,
+                lista=lista,
+                posicao=response.meta.get("observatorio_posicao"),
             )
-            if self.janela_publicacao.encerrada(alvo_id):
-                # Nada mais será pedido a esta fonte; o que já estava na fila
-                # do Scrapy é descartado pelo middleware de encerramento.
-                self.detalhes_pendentes.get(alvo_id, {}).clear()
-                self.navegacao_pendente.get(alvo_id, {}).clear()
-                self.logger.info("Fonte encerrada (vagas antigas ou já gravadas): %s", alvo_id)
+            if not esgotada_antes and self.janela_publicacao.lista_esgotada(lista):
+                self._podar_lista_esgotada(alvo_id, lista)
             if descartar:
                 # Vaga fora da janela ou já gravada não é guardada nem extraída.
                 return
@@ -685,6 +687,12 @@ class CatalogoFontesSpider(Spider):
                 if not self.estado_incremental.detalhe_conhecido(alvo_id=alvo_id, url=url)
             ]
             self.detalhes_reaproveitados[alvo_id] += total_antes - len(urls_detalhe)
+        if self.urls_conhecidas:
+            # Vaga já gravada no MongoDB não é nem pedida (antes era baixada e só
+            # então descartada, encerrando a fonte inteira).
+            total_antes = len(urls_detalhe)
+            urls_detalhe = [url for url in urls_detalhe if url not in self.urls_conhecidas]
+            self.detalhes_ja_gravados[alvo_id] += total_antes - len(urls_detalhe)
         self.detalhes_descobertos.setdefault(alvo_id, set()).update(urls_detalhe)
         if (
             not urls_detalhe
@@ -708,13 +716,16 @@ class CatalogoFontesSpider(Spider):
         navegacao_pendente = self.navegacao_pendente.setdefault(alvo_id, {})
         for url in urls_navegacao:
             if url not in agendadas:
-                navegacao_pendente.setdefault(url, None)
+                # Guarda de que listagem veio: se ela esgotar, a seguinte também.
+                navegacao_pendente.setdefault(url, response.url)
         urls_navegacao = [url for url in navegacao_pendente if url not in agendadas]
 
         pendentes = self.detalhes_pendentes.setdefault(alvo_id, {})
-        for url in urls_detalhe:
+        lista_ordenada = None if eh_resposta_sitemap(response) else response.url
+        for posicao, url in enumerate(urls_detalhe):
             if url not in agendadas:
-                pendentes.setdefault(url, None)
+                # Posição na ordem da listagem (sitemap não tem ordem de data).
+                pendentes.setdefault(url, (lista_ordenada, posicao))
 
         if fonte in {Fonte.CKAN.value, Fonte.QUERIDO_DIARIO.value}:
             # Adaptadores especializados mantêm a navegação própria: CKAN
@@ -762,6 +773,7 @@ class CatalogoFontesSpider(Spider):
         # - bloqueio do Empregos;
         # - deduplicação;
         # - limite de páginas.
+        navegacao_origem = dict(navegacao_pendente)
         requisicoes = self._criar_requisicoes(
             resposta=response,
             urls=urls,
@@ -787,7 +799,9 @@ class CatalogoFontesSpider(Spider):
             else:
                 # Só removemos um detalhe da fila depois que a fábrica criou
                 # a requisição autorizada para ele.
-                pendentes.pop(requisicao.url, None)
+                self._marcar_origem_detalhe(requisicao, pendentes.pop(requisicao.url, None))
+            if requisicao.meta.get("observatorio_tipo_pagina") == "inicial":
+                requisicao.meta["observatorio_lista_origem"] = navegacao_origem.get(requisicao.url)
 
         self.logger.info(
             "Detalhes autorizados: alvo_id=%s agendados=%s",
@@ -812,6 +826,29 @@ class CatalogoFontesSpider(Spider):
 
         # Entrega as requisições aprovadas ao Scrapy.
         yield from requisicoes
+
+    @staticmethod
+    def _marcar_origem_detalhe(requisicao: Request, origem: object) -> None:
+        """Leva para a requisição a listagem e a posição em que o detalhe apareceu."""
+
+        if isinstance(origem, tuple) and len(origem) == 2:
+            requisicao.meta["observatorio_lista"], requisicao.meta["observatorio_posicao"] = origem
+
+    def _podar_lista_esgotada(self, alvo_id: str, lista: str) -> None:
+        """Tira da fila os detalhes seguintes da listagem e as páginas que vieram dela."""
+
+        limite = self.janela_publicacao.limite_da_lista(lista) or 0
+        pendentes = self.detalhes_pendentes.get(alvo_id, {})
+        for url, origem in list(pendentes.items()):
+            if isinstance(origem, tuple) and origem[0] == lista and origem[1] >= limite:
+                pendentes.pop(url, None)
+        navegacao = self.navegacao_pendente.get(alvo_id, {})
+        for url, origem in list(navegacao.items()):
+            if origem == lista:
+                navegacao.pop(url, None)
+        self.logger.info(
+            "Listagem esgotada (3 vagas velhas seguidas): alvo_id=%s lista=%s", alvo_id, lista
+        )
 
     def _verificar_fonte_sem_vagas(
         self, alvo_id: str, *, candidatos_na_pagina: int, e_sitemap: bool

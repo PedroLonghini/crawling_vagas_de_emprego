@@ -77,18 +77,61 @@ def test_data_sem_hora_so_e_velha_por_dia_inteiro() -> None:
     assert esta_velha(anteontem, horas=24, agora=AGORA)
 
 
-def test_fonte_so_encerra_com_tres_velhas_seguidas() -> None:
-    janela = JanelaPublicacao(horas=24)
-    velha = DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True)
-    nova = DataPublicacao(datetime.now(UTC), True)
+VELHA = DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True)
 
-    assert janela.registrar("a", velha) and janela.registrar("a", velha)
+
+def _nova() -> DataPublicacao:
+    return DataPublicacao(datetime.now(UTC), True)
+
+
+def test_listagem_esgota_com_tres_velhas_seguidas_na_ordem_da_lista() -> None:
+    janela = JanelaPublicacao(horas=24)
+
+    assert janela.registrar("a", VELHA, lista="L", posicao=0)
+    assert janela.registrar("a", VELHA, lista="L", posicao=1)
+    assert not janela.lista_esgotada("L")
+    assert janela.registrar("a", VELHA, lista="L", posicao=2)
+
+    assert janela.limite_da_lista("L") == 3
+    assert not janela.encerrada("a")  # a fonte continua: outras listagens seguem
+
+
+def test_ordem_de_chegada_nao_esgota_a_listagem() -> None:
+    """Respostas fora de ordem (0, 5, 9) não são 'seguidas' na listagem."""
+
+    janela = JanelaPublicacao(horas=24)
+    for posicao in (0, 5, 9):
+        janela.registrar("a", VELHA, lista="L", posicao=posicao)
+
+    assert not janela.lista_esgotada("L")
+
+
+def test_vaga_nova_depois_das_velhas_impede_esgotar() -> None:
+    """Lista que não está em ordem de data: uma nova mais abaixo cancela o corte."""
+
+    janela = JanelaPublicacao(horas=24)
+    assert not janela.registrar("a", _nova(), lista="L", posicao=6)
+    for posicao in (0, 1, 2):
+        janela.registrar("a", VELHA, lista="L", posicao=posicao)
+
+    assert not janela.lista_esgotada("L")
+
+
+def test_listagens_sao_independentes() -> None:
+    janela = JanelaPublicacao(horas=24)
+    for posicao in (0, 1, 2):
+        janela.registrar("a", VELHA, lista="antiga", posicao=posicao)
+
+    assert janela.lista_esgotada("antiga")
+    assert not janela.lista_esgotada("outubro")
+
+
+def test_vaga_sem_lista_nao_esgota_nada() -> None:
+    janela = JanelaPublicacao(horas=24)
+    for _ in range(5):
+        assert janela.registrar("a", VELHA)
+
     assert not janela.encerrada("a")
-    assert not janela.registrar("a", nova)  # reinicia a contagem
-    assert janela.registrar("a", velha) and janela.registrar("a", velha)
-    assert not janela.encerrada("a")
-    assert janela.registrar("a", velha)
-    assert janela.encerrada("a")
 
 
 def test_pagina_sem_data_nunca_encerra() -> None:
@@ -100,15 +143,7 @@ def test_pagina_sem_data_nunca_encerra() -> None:
     assert not janela.encerrada("a")
 
 
-def test_fontes_sao_independentes() -> None:
-    janela = JanelaPublicacao(horas=24, velhas_seguidas_para_encerrar=1)
-    janela.registrar("a", DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True))
-
-    assert janela.encerrada("a")
-    assert not janela.encerrada("b")
-
-
-def test_middleware_descarta_requisicoes_de_fonte_encerrada() -> None:
+def _middleware(janela: JanelaPublicacao):
     class Estatisticas:
         def inc_value(self, *_: object) -> None: ...
 
@@ -116,38 +151,50 @@ def test_middleware_descarta_requisicoes_de_fonte_encerrada() -> None:
         stats = Estatisticas()
         spider = None
 
-    janela = JanelaPublicacao(horas=24, velhas_seguidas_para_encerrar=1)
-    janela.registrar("a", DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True))
-
     class Spider:
         janela_publicacao = janela
 
-    middleware = EncerramentoPorIdadeDownloaderMiddleware(Crawler())  # type: ignore[arg-type]
+    return EncerramentoPorIdadeDownloaderMiddleware(Crawler()), Spider()  # type: ignore[arg-type]
+
+
+def test_middleware_descarta_o_resto_da_lista_esgotada_e_a_pagina_seguinte() -> None:
+    janela = JanelaPublicacao(horas=24)
+    for posicao in (0, 1, 2):
+        janela.registrar("a", VELHA, lista="L", posicao=posicao)
+    middleware, spider = _middleware(janela)
+
+    def pedido(**meta: object) -> Request:
+        return Request("https://exemplo.com/x", meta={"observatorio_alvo_id": "a", **meta})
+
+    with pytest.raises(IgnoreRequest):
+        middleware.process_request(pedido(observatorio_lista="L", observatorio_posicao=7), spider)
+    with pytest.raises(IgnoreRequest):
+        middleware.process_request(pedido(observatorio_lista_origem="L"), spider)
+    # Outras listagens e posições anteriores continuam.
+    middleware.process_request(pedido(observatorio_lista="M", observatorio_posicao=7), spider)
+    middleware.process_request(pedido(observatorio_lista="L", observatorio_posicao=1), spider)
+
+
+def test_middleware_descarta_fonte_encerrada_sem_vagas() -> None:
+    janela = JanelaPublicacao()
+    janela.encerrar("a")
+    middleware, spider = _middleware(janela)
 
     with pytest.raises(IgnoreRequest):
         middleware.process_request(
-            Request("https://exemplo.com/1", meta={"observatorio_alvo_id": "a"}), Spider()
-        )  # type: ignore[arg-type]
-
+            Request("https://exemplo.com/1", meta={"observatorio_alvo_id": "a"}), spider
+        )
     middleware.process_request(
-        Request("https://exemplo.com/2", meta={"observatorio_alvo_id": "b"}), Spider()
-    )  # type: ignore[arg-type]
+        Request("https://exemplo.com/2", meta={"observatorio_alvo_id": "b"}), spider
+    )
 
 
-def test_vaga_sem_data_ja_gravada_e_descartada_e_encerra_a_fonte() -> None:
-    janela = JanelaPublicacao()
+def test_vaga_ja_gravada_e_descartada_sem_encerrar_a_fonte() -> None:
+    janela = JanelaPublicacao(horas=24)
 
-    assert janela.registrar("a", None, conhecida=False) is False
-    assert not janela.encerrada("a")
     assert janela.registrar("a", None, conhecida=True) is True
-    assert janela.encerrada("a")
-
-
-def test_vaga_com_data_ja_gravada_nao_encerra_sem_janela() -> None:
-    janela = JanelaPublicacao()
-    nova = DataPublicacao(datetime.now(UTC), True)
-
-    assert janela.registrar("a", nova, conhecida=True) is False
+    assert janela.registrar("a", _nova(), conhecida=True) is True
+    assert not janela.registrar("a", _nova(), conhecida=False)
     assert not janela.encerrada("a")
 
 

@@ -366,6 +366,32 @@ def test_jobposting_na_pagina_sempre_vale() -> None:
     assert _extrair_com_json_ld('[{"@type": "Event"}, {"@type": "JobPosting"}]').vagas
 
 
+def test_tipo_com_prefixo_de_vocabulario_tambem_conta() -> None:
+    assert not _extrair_com_json_ld('{"@type": "schema:Product"}').vagas
+    assert not _extrair_com_json_ld('{"@type": "http://schema.org/Event"}').vagas
+
+
+def test_oferta_aninhada_na_organizacao_nao_derruba_a_vaga() -> None:
+    organizacao = '{"@type": "Organization", "makesOffer": {"@type": "Offer"}}'
+
+    assert _extrair_com_json_ld(organizacao).vagas
+
+
+def test_og_type_produto_so_derruba_quando_nao_fala_de_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    def extrair(titulo: str, url: str):
+        html = (
+            '<html><head><meta property="og:type" content="product">'
+            f"<title>{titulo}</title></head><body><h1>{titulo}</h1>"
+            f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+        )
+        return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="E").vagas
+
+    assert not extrair("Camiseta Polo Azul", "https://loja.example/camiseta-polo")
+    assert extrair("Vaga: Auxiliar de Secretaria", "https://basilica.example/vaga-auxiliar")
+
+
 def _empresa(site_name: str, json_ld: str = '{"@type": "WebPage"}', empresa_nome: str = "X"):
     from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
 

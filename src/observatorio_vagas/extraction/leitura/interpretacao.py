@@ -419,7 +419,8 @@ def parece_resumo(texto: str | None) -> bool:
 
 
 _AUTOR_E_DATA = re.compile(r"^(por|publicad[oa]|postad[oa])\b.{0,60}\d{4}\s*$")
-_TITULO_GENERICO = re.compile(r"^(tag|categoria|arquivo|vagas? de emprego)\b|^\d[\d.]*\s+vagas")
+# "Vagas de emprego em Curitiba" é listagem; "Vaga de emprego: Vendedor" é a vaga.
+_TITULO_GENERICO = re.compile(r"^(tag|categoria|arquivo|vagas de emprego)\b|^\d[\d.]*\s+vagas")
 TAMANHO_MINIMO_TITULO = 8
 TAMANHO_MAXIMO_LINHA_DE_FIM = 40
 REPETICOES_QUE_INDICAM_LISTAGEM = 3
@@ -480,7 +481,13 @@ def bloco_da_vaga(texto_corpo: str, titulo: str) -> str | None:
     if not achou_fim and len(texto) > TAMANHO_MAXIMO_BLOCO:
         return None
     # O mesmo botão várias vezes ("Se candidatar") = vários cards.
-    botoes = sum(1 for linha in bloco if re.match(r"^\s*(se )?candidat", normalizar(linha)))
+    # Só linhas curtas contam: "Candidatos devem ter..." em parágrafo não é botão.
+    botoes = sum(
+        1
+        for linha in bloco
+        if len(linha.strip()) <= TAMANHO_MAXIMO_LINHA_DE_FIM
+        and re.match(r"^\s*(se )?candidat", normalizar(linha))
+    )
     if botoes >= REPETICOES_QUE_INDICAM_LISTAGEM:
         return None
     # Lista de cards ("Presencial", "Efetivo/CLT", "R$ 6.000") não é texto de vaga:

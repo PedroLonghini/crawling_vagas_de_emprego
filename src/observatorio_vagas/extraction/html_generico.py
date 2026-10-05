@@ -67,37 +67,73 @@ TIPOS_QUE_NAO_SAO_VAGA = frozenset(
 TIPOS_EDITORIAIS = frozenset({"newsarticle", "article", "blogposting", "reportagenewsarticle"})
 TIPOS_DE_JORNAL = frozenset({"newsarticle", "reportagenewsarticle"})
 TITULO_COM_VAGA = re.compile(
-    r"vaga|contrat|selecion|oportunidade|emprego|est[aá]gio|trainee|processo seletivo|admite|"
-    r"recrut|job|hiring|aprendiz",
+    r"vaga|\bcontrata|selecion|oportunidade|emprego|est[aá]gio|trainee|processo seletivo|"
+    r"admite|recrut|\bjobs?\b|hiring|aprendiz",
     re.IGNORECASE,
 )
 
 
-def tipos_json_ld(seletor: Selector) -> set[str]:
-    """Todos os @type declarados nos JSON-LD da página, em minúsculas."""
+def _tipo_normalizado(item: str) -> str:
+    """``schema:Product`` e ``http://schema.org/Product`` viram ``product``."""
 
+    return item.rsplit("/", 1)[-1].split(":")[-1].casefold()
+
+
+def _blocos_json_ld(seletor: Selector) -> list[Any]:
     import json
+
+    blocos = []
+    for bloco in seletor.css('script[type="application/ld+json"]::text').getall():
+        try:
+            blocos.append(json.loads(bloco))
+        except ValueError:
+            continue
+    return blocos
+
+
+def tipos_json_ld(seletor: Selector) -> set[str]:
+    """Os @type do que a página É: o topo de cada JSON-LD, o @graph e o mainEntity.
+
+    Tipos aninhados (``Organization`` → ``makesOffer`` → ``Offer``) ficam de fora: dizem
+    o que a empresa vende, não o que a página é.
+    """
 
     tipos: set[str] = set()
 
-    def visitar(valor: Any) -> None:
-        if isinstance(valor, dict):
-            tipo = valor.get("@type")
-            for item in tipo if isinstance(tipo, list) else [tipo]:
-                if isinstance(item, str):
-                    tipos.add(item.casefold())
-            for filho in valor.values():
-                visitar(filho)
-        elif isinstance(valor, list):
+    def anotar(valor: Any) -> None:
+        if isinstance(valor, list):
             for item in valor:
-                visitar(item)
+                anotar(item)
+            return
+        if not isinstance(valor, dict):
+            return
+        tipo = valor.get("@type")
+        for item in tipo if isinstance(tipo, list) else [tipo]:
+            if isinstance(item, str):
+                tipos.add(_tipo_normalizado(item))
+        anotar(valor.get("@graph"))
+        anotar(valor.get("mainEntity"))
 
-    for bloco in seletor.css('script[type="application/ld+json"]::text').getall():
-        try:
-            visitar(json.loads(bloco))
-        except ValueError:
-            continue
+    for bloco in _blocos_json_ld(seletor):
+        anotar(bloco)
     return tipos
+
+
+def tem_job_posting(seletor: Selector) -> bool:
+    """Há um JobPosting em qualquer ponto dos JSON-LD da página."""
+
+    def visitar(valor: Any) -> bool:
+        if isinstance(valor, list):
+            return any(visitar(item) for item in valor)
+        if not isinstance(valor, dict):
+            return False
+        tipo = valor.get("@type")
+        for item in tipo if isinstance(tipo, list) else [tipo]:
+            if isinstance(item, str) and _tipo_normalizado(item) == "jobposting":
+                return True
+        return any(visitar(filho) for filho in valor.values())
+
+    return visitar(_blocos_json_ld(seletor))
 
 
 # Palavras que, no nome do site, indicam portal de vagas, mídia ou blog — não a
@@ -136,20 +172,25 @@ def nome_de_portal(nome: str, tipos: set[str] | frozenset[str] = frozenset()) ->
 def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
     """A própria página se declara outra coisa (loja, evento, lista, notícia sem vaga)."""
 
-    tipos = tipos_json_ld(seletor)
-    if "jobposting" in tipos:
+    if tem_job_posting(seletor):
         return False
+    tipos = tipos_json_ld(seletor)
     if tipos & TIPOS_QUE_NAO_SAO_VAGA:
         return True
+    fala_de_vaga = bool(
+        TITULO_COM_VAGA.search(titulo) or TITULO_COM_VAGA.search(urlsplit(url).path)
+    )
+    # og:type=product sozinho não basta: há temas que marcam toda página assim
+    # (basilicadenazare.com.br); a vaga vale se o título ou o endereço falarem dela.
     og_tipo = (seletor.css('meta[property="og:type"]::attr(content)').get() or "").casefold()
     if og_tipo.startswith("product"):
-        return True
+        return not fala_de_vaga
     # og:type=article sozinho não conta: o WordPress marca TODA página assim (as 92
     # vagas da Comdarpe têm og:type=article). Só o JSON-LD de notícia/post conta, e
     # ainda assim a vaga vale se o título ou o endereço falarem de vaga.
     if not tipos & TIPOS_EDITORIAIS:
         return False
-    return not (TITULO_COM_VAGA.search(titulo) or TITULO_COM_VAGA.search(urlsplit(url).path))
+    return not fala_de_vaga
 
 
 # Rótulos explícitos podem aparecer em parágrafos vizinhos. O seletor HTML

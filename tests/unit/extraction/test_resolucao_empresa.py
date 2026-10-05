@@ -374,3 +374,41 @@ def test_resolucao_em_lote_igual_a_um_por_um() -> None:
         cache=cache,
     )
     assert lote_empresas.gravacoes == gravacoes
+
+
+def test_anuncio_sem_empresa_e_sem_descricao_util_e_inutil() -> None:
+    from observatorio_vagas.extraction.resolucao_empresa import anuncio_e_inutil
+
+    sem_nada = criar_anuncio(nome_empresa=None).model_copy(
+        update={
+            "empresa_original": None,
+            "descricao_original": "Vaga publicada no formulário de carreira da empresa.",
+            "campos_estruturados": {"@type": "JobPosting"},
+        }
+    )
+
+    assert anuncio_e_inutil(sem_nada)
+
+
+def test_anuncio_com_empresa_ou_com_descricao_longa_nao_e_inutil() -> None:
+    from observatorio_vagas.extraction.resolucao_empresa import anuncio_e_inutil
+
+    com_empresa = criar_anuncio()
+    sem_empresa_com_descricao = criar_anuncio(nome_empresa=None).model_copy(
+        update={
+            "empresa_original": None,
+            "descricao_original": "Atividades: atender clientes, organizar rotinas. " * 4,
+            "campos_estruturados": {"@type": "JobPosting"},
+        }
+    )
+    so_na_organizacao = criar_anuncio(nome_empresa=None).model_copy(
+        update={
+            "empresa_original": None,
+            "descricao_original": "curta",
+            "campos_estruturados": {"hiringOrganization": {"name": "Acme"}},
+        }
+    )
+
+    assert not anuncio_e_inutil(com_empresa)
+    assert not anuncio_e_inutil(sem_empresa_com_descricao)
+    assert not anuncio_e_inutil(so_na_organizacao)

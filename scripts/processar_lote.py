@@ -1140,6 +1140,7 @@ def _carregar_anuncios_do_lote(
     anuncios = repositorio.listar_por_alvo(
         alvo_id,
         limite=limite,
+        observados_desde=coletado_desde,
     )
 
     return tuple(

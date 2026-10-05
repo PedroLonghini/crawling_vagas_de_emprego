@@ -218,7 +218,10 @@ class ColecaoAnunciosFalsa:
             # O $setOnInsert não pode ser aplicado em atualizações.
             self.documentos[anuncio_id].update(atualizacao["$set"])
             for campo, valor in atualizacao.get("$max", {}).items():
-                if self.documentos[anuncio_id].get(campo) is None or valor > self.documentos[anuncio_id][campo]:
+                if (
+                    self.documentos[anuncio_id].get(campo) is None
+                    or valor > self.documentos[anuncio_id][campo]
+                ):
                     self.documentos[anuncio_id][campo] = valor
 
         return dict(self.documentos[anuncio_id])
@@ -581,4 +584,45 @@ def test_listar_recentes_filtra_por_fonte() -> None:
     assert [anuncio.id_externo for anuncio in encontrados] == [
         "gupy-recente",
         "gupy-antigo",
+    ]
+
+
+def test_listar_por_alvo_filtra_o_periodo_no_proprio_mongodb() -> None:
+    from datetime import UTC, datetime
+
+    class CursorCapturador:
+        def sort(self, *_: object) -> CursorCapturador:
+            return self
+
+        def limit(self, *_: object) -> CursorCapturador:
+            return self
+
+        def allow_disk_use(self, *_: object) -> CursorCapturador:
+            return self
+
+        def __iter__(self):
+            return iter(())
+
+    class ColecaoCapturadora:
+        filtros: list[dict[str, object]] = []
+
+        def find(self, filtro: dict[str, object]) -> CursorCapturador:
+            self.filtros.append(filtro)
+            return CursorCapturador()
+
+    class BancoCapturador:
+        colecao = ColecaoCapturadora()
+
+        def __getitem__(self, _: str) -> ColecaoCapturadora:
+            return self.colecao
+
+    repositorio = RepositorioAnunciosMongoDB(BancoCapturador())  # type: ignore[arg-type]
+    desde = datetime(2026, 10, 2, tzinfo=UTC)
+
+    repositorio.listar_por_alvo("alvo_a", limite=50, observados_desde=desde)
+    repositorio.listar_por_alvo("alvo_b")
+
+    assert ColecaoCapturadora.filtros == [
+        {"alvo_id": "alvo_a", "ultima_observacao_em": {"$gte": desde}},
+        {"alvo_id": "alvo_b"},
     ]

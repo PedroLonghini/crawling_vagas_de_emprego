@@ -24,6 +24,7 @@ from observatorio_vagas.extraction import (
     processar_respostas_brutas,
 )
 from observatorio_vagas.extraction.data_publicacao import ontem_brasilia
+from observatorio_vagas.extraction.resolucao_empresa import anuncio_e_inutil
 from observatorio_vagas.storage.mongodb import (
     ConexaoMongoDB,
     ErroConexaoMongoDB,
@@ -262,6 +263,19 @@ def concluir_extracao(
         print("Nenhum anúncio foi encontrado. Nada será gravado.")
         return CODIGO_SEM_ANUNCIOS if sinalizar_sem_anuncios else 0
 
+    # Anúncio sem empresa e sem descrição útil nunca será publicado: gravá-lo só
+    # faria o lote tentar de novo a cada dia (27 mil no teste de 10 mil fontes).
+    anuncios_para_gravar = tuple(
+        anuncio for anuncio in resultado_extracao.anuncios if not anuncio_e_inutil(anuncio)
+    )
+    descartados = len(resultado_extracao.anuncios) - len(anuncios_para_gravar)
+    if descartados:
+        print()
+        print(f"Anúncios descartados (sem empresa e sem descrição útil): {descartados}")
+    if not anuncios_para_gravar:
+        print("Nenhum anúncio útil. Nada será gravado.")
+        return CODIGO_SEM_ANUNCIOS if sinalizar_sem_anuncios else 0
+
     # Sem confirmação, termina antes de abrir o MongoDB.
     if not confirmar:
         print()
@@ -283,7 +297,7 @@ def concluir_extracao(
 
             repositorio = RepositorioAnunciosMongoDB(conexao.banco)
 
-            resultado_gravacao = repositorio.salvar_lote(resultado_extracao.anuncios)
+            resultado_gravacao = repositorio.salvar_lote(anuncios_para_gravar)
 
     except (
         ErroConexaoMongoDB,

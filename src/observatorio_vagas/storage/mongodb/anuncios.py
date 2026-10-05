@@ -7,6 +7,7 @@ from __future__ import annotations
 # O crawler poderá entregar vários anúncios de uma vez,
 # sem ficar preso a somente um tipo de coleção Python.
 from collections.abc import Sequence
+from datetime import datetime
 
 # UUID representa os identificadores internos dos anúncios e empresas.
 from uuid import UUID
@@ -354,8 +355,14 @@ class RepositorioAnunciosMongoDB:
         self,
         alvo_id: str,
         limite: int = 100,
+        *,
+        observados_desde: datetime | None = None,
     ) -> list[AnuncioVaga]:
-        """Lista anúncios pertencentes a um alvo do catálogo."""
+        """Lista anúncios pertencentes a um alvo do catálogo.
+
+        ``observados_desde`` filtra no MongoDB, em vez de trazer tudo pelo túnel
+        e descartar em Python.
+        """
 
         alvo_normalizado = alvo_id.strip()
 
@@ -366,12 +373,12 @@ class RepositorioAnunciosMongoDB:
             raise ValueError("limite deve estar entre 1 e 10000")
 
         try:
+            filtro: dict[str, object] = {"alvo_id": alvo_normalizado}
+            if observados_desde is not None:
+                filtro["ultima_observacao_em"] = {"$gte": observados_desde}
+
             cursor = (
-                self._colecao.find(
-                    {
-                        "alvo_id": alvo_normalizado,
-                    }
-                )
+                self._colecao.find(filtro)
                 .sort(
                     "ultima_observacao_em",
                     DESCENDING,

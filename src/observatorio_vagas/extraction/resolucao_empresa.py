@@ -216,6 +216,20 @@ def _gerar_id_empresa(
     )
 
 
+DESCRICAO_UTIL_MINIMA = 80
+
+
+def anuncio_e_inutil(anuncio: AnuncioVaga) -> bool:
+    """Sem nome de empresa e sem descrição que sirva: nunca poderá ser publicado."""
+
+    organizacao = _primeiro_objeto(anuncio.campos_estruturados.get("hiringOrganization"))
+    nome_organizacao = _texto(organizacao.get("name")) if organizacao is not None else None
+    if anuncio.empresa_original or nome_organizacao:
+        return False
+
+    return len((anuncio.descricao_original or "").strip()) < DESCRICAO_UTIL_MINIMA
+
+
 def extrair_empresa_do_anuncio(
     anuncio: AnuncioVaga,
 ) -> Empresa:

@@ -130,3 +130,18 @@ def test_banco_de_talentos_e_marcadores_entre_colchetes_nao_sao_vagas() -> None:
     )
 
     assert _titulos(html) == ["Engenheiro Eletricista"]
+
+
+def test_portal_de_vagas_nao_herda_o_nome_do_site_como_empresa() -> None:
+    from observatorio_vagas.extraction.listagem_carreiras import atribuir_empresa_do_site
+
+    html = (
+        b'<html><head><meta property="og:site_name" content="Empregos na Bahia"></head>'
+        b'<body><select id="cargo-pretendido"><option>Analista</option></select></body></html>'
+    )
+    url = "https://empregosnabahia.example/trabalhe-conosco"
+    vagas = extrair_vagas_listagem_carreiras(html, url=url).vagas
+
+    resultado = atribuir_empresa_do_site(vagas, url=url, empresa_nome="Empregosnabahia", corpo=html)
+
+    assert "hiringOrganization" not in resultado[0]

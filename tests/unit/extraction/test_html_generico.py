@@ -364,3 +364,35 @@ def test_noticia_so_vale_se_o_titulo_falar_de_vaga() -> None:
 
 def test_jobposting_na_pagina_sempre_vale() -> None:
     assert _extrair_com_json_ld('[{"@type": "Event"}, {"@type": "JobPosting"}]').vagas
+
+
+def _empresa(site_name: str, json_ld: str = '{"@type": "WebPage"}', empresa_nome: str = "X"):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f'<html><head><meta property="og:site_name" content="{site_name}">'
+        f'<script type="application/ld+json">{json_ld}</script></head><body>'
+        f'<h1>Operador de Máquina</h1><div class="job-description">{DESCRICAO_LONGA}</div>'
+        "</body></html>"
+    )
+    vagas = extrair_job_posting_html_generico(
+        html.encode(), url="https://site.example/vagas/1", empresa_nome=empresa_nome
+    ).vagas
+    return (vagas[0].get("hiringOrganization") or {}).get("name") if vagas else "SEM VAGA"
+
+
+def test_nome_de_portal_ou_jornal_nao_vira_empresa() -> None:
+    for portal in ("Empregos na Bahia", "Folha de Paraguaçu", "Mundo RH", "Turismoemfoco"):
+        assert _empresa(portal, empresa_nome="Portal") is None, portal
+
+
+def test_nome_da_empresa_do_site_continua_valendo() -> None:
+    assert _empresa("Comdarpe") == "Comdarpe"
+    assert _empresa("Laserflex") == "Laserflex"
+
+
+def test_pagina_de_noticia_nao_herda_o_nome_do_site() -> None:
+    noticia = '{"@type": "NewsArticle"}'
+
+    # A vaga passa (o endereço tem /vagas/), mas a empresa não é o jornal.
+    assert _empresa("Hora Brasil", noticia, empresa_nome="Hora Brasil") is None

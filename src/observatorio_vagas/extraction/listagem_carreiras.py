@@ -64,14 +64,19 @@ def atribuir_empresa_do_site(
     if not vagas or not site_e_da_propria_empresa(url):
         return vagas
 
+    from observatorio_vagas.extraction.html_generico import nome_de_portal, tipos_json_ld
+
     nome = None
+    tipos: set[str] = set()
     try:
         seletor = Selector(text=corpo.decode(codificacao, errors="replace"))
         nome = _texto(seletor.css('meta[property="og:site_name"]::attr(content)').get())
+        tipos = tipos_json_ld(seletor)
     except (ValueError, LookupError):
         nome = None
     nome = nome or _texto(empresa_nome)
-    if not nome:
+    # Portal, jornal ou blog não é a empresa que contrata.
+    if not nome or nome_de_portal(nome, tipos):
         return vagas
 
     host = (urlsplit(url).hostname or "").removeprefix("www.")

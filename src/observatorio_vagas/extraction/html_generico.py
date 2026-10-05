@@ -99,6 +99,22 @@ def tipos_json_ld(seletor: Selector) -> set[str]:
     return tipos
 
 
+# Palavras que, no nome do site, indicam portal de vagas, mídia ou blog — não a
+# empresa que contrata.
+NOME_DE_PORTAL = re.compile(
+    r"\b(empregos?|vagas?|jobs?|carreiras?|rh|recrutamento|recursos humanos|talentos?|"
+    r"not[ií]cias?|jornal|folha|portal|blog|revista|news|fan|classificados|guia|tv|r[aá]dio)\b|"
+    r"turismo|emprego|vaga",
+    re.IGNORECASE,
+)
+
+
+def nome_de_portal(nome: str, tipos: set[str] | frozenset[str] = frozenset()) -> bool:
+    """O nome do site é de um portal/mídia (ou a página é notícia/post), não de quem contrata."""
+
+    return bool(NOME_DE_PORTAL.search(nome)) or bool(set(tipos) & TIPOS_EDITORIAIS)
+
+
 def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
     """A própria página se declara outra coisa (loja, evento, lista, notícia sem vaga)."""
 
@@ -586,14 +602,21 @@ def extrair_job_posting_html_generico(
     if descricao is None or TEXTO_DE_COOKIES.search(descricao):
         return ResultadoHTMLGenerico(vagas=())
 
-    empresa = _primeiro_texto(
+    empresa_da_vaga = _primeiro_texto(
         seletor,
         (
             "string(//*[@itemprop='hiringOrganization'][1]//*[@itemprop='name'][1])",
             "string(//*[contains(concat(' ', normalize-space(@class), ' '), ' company-name ')][1])",
-            "//meta[@property='og:site_name']/@content",
         ),
+    )
+    empresa_do_site = _primeiro_texto(
+        seletor, ("//meta[@property='og:site_name']/@content",)
     ) or _limpar_texto(empresa_nome)
+    # O nome do SITE só vale como empresa se o site não for portal, jornal ou blog
+    # ("Empregos na Bahia", "Folha de Paraguaçu", "Mundo RH" viraram empresa em 05/10).
+    if empresa_do_site and nome_de_portal(empresa_do_site, tipos_json_ld(seletor)):
+        empresa_do_site = None
+    empresa = empresa_da_vaga or empresa_do_site
     localidade_seletores = (
         "string(//*[@itemprop='jobLocation'][1])",
         "string(//*[contains(concat(' ', normalize-space(@class), ' '), ' job-location ')][1])",

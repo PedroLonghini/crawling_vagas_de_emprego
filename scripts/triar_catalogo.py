@@ -13,8 +13,10 @@ Gera na pasta de saída:
     resumo.json                                  totais por motivo, classe e domínio
 
 A triagem só exclui o inequívoco (PDF/imagem, categoria de blog, artigo datado sem
-palavra de vaga, lista editorial). Fontes improdutivas NÃO são removidas: o relatório é
-para você revisar, e o agendamento já as visita só a cada 7 ou 30 dias.
+palavra de vaga, lista editorial, produto/loja/curso, descrição de cargo). Com
+--com-mongo, também tira notícia, curso, produto ou institucional que nunca rendeu
+anúncio. As demais fontes improdutivas NÃO são removidas: o relatório é para você
+revisar, e o agendamento já as visita só a cada 7 ou 30 dias.
 Não altera o catálogo original e, mesmo com --com-mongo, só lê o MongoDB.
 """
 
@@ -30,7 +32,12 @@ from urllib.parse import urlsplit
 
 from observatorio_vagas.config import get_settings
 from observatorio_vagas.crawling.catalog import carregar_alvos_csv_tolerante
-from observatorio_vagas.crawling.triagem_fontes import classificar, motivo_de_exclusao
+from observatorio_vagas.crawling.triagem_fontes import (
+    MOTIVO_EDITORIAL_SEM_ANUNCIO,
+    classificar,
+    motivo_de_exclusao,
+    tem_palavra_de_vaga,
+)
 from observatorio_vagas.storage.mongodb.connection import ConexaoMongoDB
 
 NOME_CATALOGO = "catalogo_fontes.csv"
@@ -57,11 +64,22 @@ def triar(catalogo: Path, saida: Path, *, com_mongo: bool) -> dict:
     alvos = resultado.alvos
     saida.mkdir(parents=True, exist_ok=True)
 
+    com_anuncio = _alvos_com_anuncio() if com_mongo else set()
     mantidas: list[str] = []
     excluidas: list[tuple[str, str]] = []
     por_motivo: collections.Counter[str] = collections.Counter()
     for alvo in alvos:
         motivo = motivo_de_exclusao(alvo.url_inicial)
+        # Notícia, curso, produto ou institucional que já foi visitada e nunca rendeu
+        # nenhum anúncio sai do catálogo; com anúncio, fica (pode ser vaga em notícia).
+        if (
+            not motivo
+            and com_mongo
+            and alvo.alvo_id not in com_anuncio
+            and classificar(alvo.url_inicial) == "editorial_ou_produto"
+            and not tem_palavra_de_vaga(alvo.url_inicial)
+        ):
+            motivo = MOTIVO_EDITORIAL_SEM_ANUNCIO
         if motivo:
             excluidas.append((alvo.url_inicial, motivo))
             por_motivo[motivo] += 1
@@ -85,7 +103,6 @@ def triar(catalogo: Path, saida: Path, *, com_mongo: bool) -> dict:
     }
 
     if com_mongo:
-        com_anuncio = _alvos_com_anuncio()
         sem_anuncio = [alvo for alvo in alvos if alvo.alvo_id not in com_anuncio]
         por_classe: collections.Counter[str] = collections.Counter()
         por_dominio: collections.Counter[str] = collections.Counter()

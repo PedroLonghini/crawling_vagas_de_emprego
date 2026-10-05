@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
 from observatorio_vagas.domain.enums import TipoPaginaColeta
+
+# De quantos em quantos metadados o reprocessamento avisa o andamento.
+AVISO_DE_PROGRESSO = 10_000
 
 
 class ErroInventarioBruto(ValueError):
@@ -105,8 +108,12 @@ def carregar_inventario_bruto_desde(
     diretorio_base: str | Path,
     *,
     desde: datetime,
+    progresso: Callable[[int, int], None] | None = None,
 ) -> tuple[RegistroInventarioBruto, ...]:
     """Lê somente os metadados dos dias alcançados por ``desde``.
+
+    ``progresso(lidos, total)`` é chamado a cada ``AVISO_DE_PROGRESSO`` arquivos: com
+    centenas de milhares de metadados, esta etapa leva dezenas de minutos.
 
     O armazenamento já separa respostas por fonte, ano, mês e dia. Usar essa
     estrutura evita percorrer todo o histórico quando um lote recém-coletado
@@ -136,10 +143,11 @@ def carregar_inventario_bruto_desde(
                 caminhos.extend(pasta.glob("*.json"))
         dia += timedelta(days=1)
 
-    registros = [
-        _carregar_registro(caminho=caminho, diretorio_base=base)
-        for caminho in caminhos
-    ]
+    registros = []
+    for lidos, caminho in enumerate(caminhos, start=1):
+        registros.append(_carregar_registro(caminho=caminho, diretorio_base=base))
+        if progresso is not None and (lidos % AVISO_DE_PROGRESSO == 0 or lidos == len(caminhos)):
+            progresso(lidos, len(caminhos))
     return tuple(
         sorted(
             (registro for registro in registros if registro.coletado_em >= desde),

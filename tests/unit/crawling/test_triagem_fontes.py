@@ -17,6 +17,8 @@ from observatorio_vagas.crawling.triagem_fontes import classificar, motivo_de_ex
         "https://www.vagaspoa.com.br/category/vagas-por-area-2/promotor",
         "https://agrobase.com.br/oportunidades/2026/05/25-vagas-bolsistas-rio-de-janeiro/",
         "https://www.jobijoba.com.br/detail/97/9066a2f55eb15ae157077b6c53d64e55",
+        # Curso com palavra de vaga pode ser programa de aprendiz/estágio.
+        "https://empresa.example/cursos/jovem-aprendiz-vagas",
     ],
 )
 def test_nao_exclui_o_que_pode_ser_vaga(url: str) -> None:
@@ -32,6 +34,10 @@ def test_nao_exclui_o_que_pode_ser_vaga(url: str) -> None:
         ("https://blog.example/tag/marketing", "categoria"),
         ("https://ibsec.com.br/10-carreiras-que-voce-pode-seguir-em-ciberseguranca/", "lista"),
         ("https://www.uol.com.br/esporte/2025/04/25/boxeador-olimpico-vence-luta/", "datado"),
+        ("https://www.dismatal.com.br/produto/abracadeira-tipo-borboleta/30748", "produto"),
+        ("https://www.profec.com.br/curso/curso-gratuito-de-operador-de-colheitadeira", "curso"),
+        ("https://confiseg.com.br/seguranca/?product_cat=haste-estrela", "produto"),
+        ("https://cargos.com.br/cargo/taqueiro/", "descrição de cargo"),
     ],
 )
 def test_exclui_o_que_nunca_e_pagina_de_vagas(url: str, trecho: str) -> None:
@@ -82,3 +88,25 @@ def test_triar_catalogo_separa_excluidas_sem_tocar_no_original(tmp_path: Path) -
     assert "edital.pdf" not in (tmp_path / "saida" / "catalogo_fontes.csv").read_text(
         encoding="utf-8"
     )
+
+
+def test_com_mongo_tira_noticia_que_nunca_rendeu_vaga(tmp_path: Path, monkeypatch) -> None:
+    catalogo = tmp_path / "origem" / "catalogo_fontes.csv"
+    catalogo.parent.mkdir()
+    catalogo.write_text(
+        "url\nhttps://empresa.example/trabalhe-conosco\n"
+        "https://jornal.example/noticias/feira-do-livro\n"
+        "https://outro.example/noticias/empresa-abre-vagas-de-motorista\n"
+        "https://tnh1.example/noticia/senac-abre-processo-seletivo-para-cargos\n",
+        encoding="utf-8",
+    )
+    alvos = triar_catalogo.carregar_alvos_csv_tolerante(catalogo).alvos
+    com_anuncio = {a.alvo_id for a in alvos if "outro.example" in a.url_inicial}
+    monkeypatch.setattr(triar_catalogo, "_alvos_com_anuncio", lambda: com_anuncio)
+
+    resumo = triar_catalogo.triar(catalogo, tmp_path / "saida", com_mongo=True)
+
+    excluidas = (tmp_path / "saida" / "excluidas.csv").read_text(encoding="utf-8")
+    assert "feira-do-livro" in excluidas and "nunca rendeu vaga" in excluidas
+    # Carreira sem anúncio, notícia que já rendeu vaga e notícia que fala de seleção ficam.
+    assert resumo["fontes_mantidas"] == 3

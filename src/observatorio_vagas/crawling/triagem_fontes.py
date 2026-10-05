@@ -46,6 +46,15 @@ _EDITORIAL_OU_PRODUTO = re.compile(
     r"(/|$)",
     re.IGNORECASE,
 )
+# Loja, produto ou curso nunca é página de vagas (etiquetasamericana.com.br/produto/...,
+# profec.com.br/curso/curso-de-operador-de-colheitadeira).
+_LOJA_OU_CURSO = re.compile(
+    r"/(produtos?|products?|loja|shop|cursos?|pos-?graduacao|posgraduacao|graduacao|"
+    r"especializacao)(/|$)|[?&]product_cat=",
+    re.IGNORECASE,
+)
+# Página que descreve uma ocupação (salário médio, atribuições), sem vaga.
+_DESCRICAO_DE_CARGO = re.compile(r"^(www\.)?cargos\.com\.br/cargo/", re.IGNORECASE)
 
 
 def motivo_de_exclusao(url: str) -> str | None:
@@ -62,7 +71,22 @@ def motivo_de_exclusao(url: str) -> str | None:
         return "artigo de lista editorial (ex.: '10 carreiras para...')"
     if _DATA_NO_CAMINHO.search(caminho) and not _PALAVRA_DE_VAGA.search(caminho):
         return "artigo datado sem nenhuma palavra de vaga na URL"
+    if _LOJA_OU_CURSO.search(caminho + ("?" + partes.query if partes.query else "")) and not (
+        _PALAVRA_DE_VAGA.search(caminho)
+    ):
+        return "produto, loja ou curso, não é página de vagas"
+    if _DESCRICAO_DE_CARGO.search((partes.hostname or "") + caminho):
+        return "descrição de cargo (salário médio, atribuições), sem vaga"
     return None
+
+
+def tem_palavra_de_vaga(url: str) -> bool:
+    """O caminho fala de vaga, seleção, aprendiz etc. ("senac-abre-processo-seletivo")."""
+
+    return bool(_PALAVRA_DE_VAGA.search(urlsplit(url).path))
+
+
+MOTIVO_EDITORIAL_SEM_ANUNCIO = "notícia, curso, produto ou institucional que nunca rendeu vaga"
 
 
 def classificar(url: str) -> str:

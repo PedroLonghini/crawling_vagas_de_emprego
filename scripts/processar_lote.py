@@ -1128,6 +1128,10 @@ def _resultados_extracao(
         yield alvo, codigo
 
 
+def _avisar_inventario(lidos: int, total: int) -> None:
+    print(f"  inventário: {lidos}/{total} ({lidos / total:.0%}) {time.strftime('%H:%M:%S')}")
+
+
 def _carregar_anuncios_do_lote(
     repositorio: RepositorioAnunciosMongoDB,
     *,
@@ -1405,7 +1409,10 @@ def executar(
         else:
             # Reprocessamento: lê somente as pastas diárias alcançadas pelo
             # lote. Percorrer todo o histórico custava minutos.
-            registros = carregar_inventario_bruto_desde(diretorio_raw, desde=coletado_desde)
+            print("Lendo o inventário das respostas salvas (pode levar vários minutos)...")
+            registros = carregar_inventario_bruto_desde(
+                diretorio_raw, desde=coletado_desde, progresso=_avisar_inventario
+            )
     except (ErroInventarioBruto, OSError) as erro:
         print(f"ERRO NO INVENTÁRIO: {erro}")
         return 1
@@ -1722,7 +1729,9 @@ if __name__ == "__main__":
     # No Windows, a saída redirecionada para arquivo usa cp1252. Um único
     # caractere fora dele (ex.: "ı" turco num título) derrubava o lote ou
     # descartava o alvo inteiro. Caracteres impossíveis viram escapes.
+    # line_buffering: com saída redirecionada, o Python juntava o texto e o log
+    # ficava parado por dezenas de minutos; agora cada linha vai na hora.
     for fluxo in (sys.stdout, sys.stderr):
         if hasattr(fluxo, "reconfigure"):
-            fluxo.reconfigure(errors="backslashreplace")
+            fluxo.reconfigure(errors="backslashreplace", line_buffering=True)
     raise SystemExit(executar())

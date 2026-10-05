@@ -23,7 +23,7 @@ def _inventario_isolado_do_data_raw_real(monkeypatch):
     """Sem isso, testes sem --diretorio-raw liam o histórico real do data/raw."""
 
     monkeypatch.setattr(
-        processar_lote, "carregar_inventario_bruto_desde", lambda base, *, desde: ()
+        processar_lote, "carregar_inventario_bruto_desde", lambda base, *, desde, progresso=None: ()
     )
 
 
@@ -52,7 +52,7 @@ def test_lote_compartilha_inventario_sem_subprocesso(tmp_path, monkeypatch) -> N
     chamadas = []
     snapshot = ()
 
-    def inventario(base, *, desde):
+    def inventario(base, *, desde, progresso=None):
         leituras.append((base, desde))
         return snapshot
 

@@ -65,6 +65,7 @@ TIPOS_QUE_NAO_SAO_VAGA = frozenset(
 # declaram em TODAS as páginas, inclusive na de carreiras.
 # Notícia ou post só vale como vaga se o título falar de vaga/contratação.
 TIPOS_EDITORIAIS = frozenset({"newsarticle", "article", "blogposting", "reportagenewsarticle"})
+TIPOS_DE_JORNAL = frozenset({"newsarticle", "reportagenewsarticle"})
 TITULO_COM_VAGA = re.compile(
     r"vaga|contrat|selecion|oportunidade|emprego|est[aá]gio|trainee|processo seletivo|admite|"
     r"recrut|job|hiring|aprendiz",
@@ -101,18 +102,35 @@ def tipos_json_ld(seletor: Selector) -> set[str]:
 
 # Palavras que, no nome do site, indicam portal de vagas, mídia ou blog — não a
 # empresa que contrata.
-NOME_DE_PORTAL = re.compile(
-    r"\b(empregos?|vagas?|jobs?|carreiras?|rh|recrutamento|recursos humanos|talentos?|"
-    r"not[ií]cias?|jornal|folha|portal|blog|revista|news|fan|classificados|guia|tv|r[aá]dio)\b|"
-    r"turismo|emprego|vaga",
+# Sinal forte: mídia ou portal de vagas pelo próprio jeito do nome ("Empregos na Bahia",
+# "Mais Vagas ES", "Notícias Botucatu", "Vagas FRONT-END para...").
+NOME_DE_PORTAL_FORTE = re.compile(
+    r"\b(not[ií]cias?|jornal|blog|revista|news|classificados|gazeta)\b|"
+    r"\b(vagas|empregos?)\s+(de|em|na|no|para|do|da|e)\b|^(vagas|empregos?)\b|"
+    r"\bmais vagas\b|\bportal\s+de\s+(vagas|empregos?)\b|\bbanco\s+de\s+(vagas|empregos?)\b",
+    re.IGNORECASE,
+)
+# Sinal fraco: palavras que também aparecem em empresas reais ("Carreiras Nu", "Grupo
+# Folha", "Rádio Bandeirantes", "Talentos Consultoria"); só contam se a página for
+# notícia/post.
+NOME_DE_PORTAL_FRACO = re.compile(
+    r"\b(vagas?|empregos?|jobs?|carreiras?|rh|talentos?|folha|portal|guia|tv|r[aá]dio|fan)\b|"
+    r"turismo",
     re.IGNORECASE,
 )
 
 
 def nome_de_portal(nome: str, tipos: set[str] | frozenset[str] = frozenset()) -> bool:
-    """O nome do site é de um portal/mídia (ou a página é notícia/post), não de quem contrata."""
+    """O nome do site é de um portal/mídia, não de quem contrata.
 
-    return bool(NOME_DE_PORTAL.search(nome)) or bool(set(tipos) & TIPOS_EDITORIAIS)
+    Sinal forte basta, e página declarada NewsArticle também (é de jornal). Sinal fraco só
+    com a página declarada notícia/post; Article sozinho não basta (o Yoast do WordPress
+    marca páginas de empresa como Article).
+    """
+
+    if NOME_DE_PORTAL_FORTE.search(nome) or set(tipos) & TIPOS_DE_JORNAL:
+        return True
+    return bool(NOME_DE_PORTAL_FRACO.search(nome)) and bool(set(tipos) & TIPOS_EDITORIAIS)
 
 
 def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:

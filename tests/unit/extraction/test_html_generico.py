@@ -382,13 +382,24 @@ def _empresa(site_name: str, json_ld: str = '{"@type": "WebPage"}', empresa_nome
 
 
 def test_nome_de_portal_ou_jornal_nao_vira_empresa() -> None:
-    for portal in ("Empregos na Bahia", "Folha de Paraguaçu", "Mundo RH", "Turismoemfoco"):
+    for portal in ("Empregos na Bahia", "Mais Vagas ES", "Notícias Botucatu", "Gazeta Digital"):
         assert _empresa(portal, empresa_nome="Portal") is None, portal
+
+
+def test_nome_ambiguo_so_cai_em_pagina_de_noticia() -> None:
+    post = '{"@type": "BlogPosting"}'
+    for nome in ("Folha de Paraguaçu", "Mundo RH", "Turismoemfoco"):
+        assert _empresa(nome, empresa_nome="Portal") == nome, nome
+        assert _empresa(nome, post, empresa_nome="Portal") is None, nome
 
 
 def test_nome_da_empresa_do_site_continua_valendo() -> None:
     assert _empresa("Comdarpe") == "Comdarpe"
     assert _empresa("Laserflex") == "Laserflex"
+    assert _empresa("Vagalume") == "Vagalume"
+    assert _empresa("Carreiras Nu: Faça Parte do Time") == "Carreiras Nu: Faça Parte do Time"
+    # O Yoast marca páginas de empresa como Article; isso sozinho não derruba o nome.
+    assert _empresa("Massa.com.br", '{"@type": "Article"}') == "Massa.com.br"
 
 
 def test_pagina_de_noticia_nao_herda_o_nome_do_site() -> None:

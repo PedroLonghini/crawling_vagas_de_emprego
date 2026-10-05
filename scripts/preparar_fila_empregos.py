@@ -14,12 +14,18 @@ from urllib.parse import urlsplit
 
 from observatorio_vagas.config import get_settings
 from observatorio_vagas.crawling.catalog import AlvoColeta, carregar_alvos_csv
+from observatorio_vagas.domain.prontidao import CAMPOS_API_EMPREGOS
 from observatorio_vagas.extraction.data_publicacao import dia_publicacao, ontem_brasilia
 from observatorio_vagas.integrations.empregos import (
     ItemFilaEmpregos,
     MotivoFilaEmpregos,
     ResultadoFilaEmpregos,
     preparar_fila_empregos,
+)
+from observatorio_vagas.integrations.empregos.payload import (
+    _ajustar_para_a_api,
+    _inserir_valor,
+    _valor_ausente,
 )
 from observatorio_vagas.storage.mongodb import (
     ConexaoMongoDB,
@@ -313,6 +319,56 @@ def _nome_seguro(texto: str) -> str:
     return re.sub(r"[^a-zA-Z0-9._-]+", "_", texto)[:60] or "sem_nome"
 
 
+def _payload_previa(
+    item: ItemFilaEmpregos, anuncio: Any | None
+) -> tuple[dict[str, Any], list[str], str]:
+    """Monta como seria o payload da vaga, mesmo bloqueada, só para comparar.
+
+    Devolve o dicionário no formato da API, os campos obrigatórios que ficaram
+    sem valor e de onde veio a prévia.
+    """
+
+    previa: dict[str, Any] = {}
+    preparacao = item.preparacao
+
+    if preparacao is not None:
+        origem = "campos avaliados pelo relatório de prontidão"
+        for campo in preparacao.relatorio.campos:
+            if not _valor_ausente(campo.valor):
+                _inserir_valor(previa, caminho=campo.campo, valor=campo.valor)
+    else:
+        origem = "campos do anúncio extraído (a vaga parou antes da avaliação completa)"
+        if anuncio is not None:
+            candidatos = {
+                "company.applyUrl": str(anuncio.url_candidatura or anuncio.url),
+                "company.name": anuncio.empresa_original,
+                "externalJobPostingId": anuncio.id_externo,
+                "jobPostingOperationType": "CREATE",
+                "title": anuncio.titulo_original,
+                "description": anuncio.descricao_original,
+                "location.address": anuncio.endereco_original or anuncio.localidade_original,
+                "workplaceTypes": anuncio.modalidade_original,
+                "employmentStatus": anuncio.regime_original,
+            }
+            for caminho, valor in candidatos.items():
+                if not _valor_ausente(valor):
+                    _inserir_valor(previa, caminho=caminho, valor=valor)
+
+    _ajustar_para_a_api(previa)
+
+    faltando = []
+    for caminho, obrigatorio in CAMPOS_API_EMPREGOS:
+        if not obrigatorio:
+            continue
+        atual: Any = previa
+        for parte in caminho.split("."):
+            atual = atual.get(parte) if isinstance(atual, dict) else None
+        if _valor_ausente(atual):
+            faltando.append(caminho)
+
+    return previa, faltando, origem
+
+
 def _documento_bloqueada(item: ItemFilaEmpregos, anuncio: Any | None) -> dict[str, Any]:
     """Tudo o que foi lido de uma vaga bloqueada, para comparar com a página."""
 
@@ -326,6 +382,11 @@ def _documento_bloqueada(item: ItemFilaEmpregos, anuncio: Any | None) -> dict[st
         "bloqueios": [_motivo_para_json(motivo) for motivo in item.bloqueios],
         "alertas": [_motivo_para_json(motivo) for motivo in item.alertas],
     }
+    previa, faltando, origem_previa = _payload_previa(item, anuncio)
+    documento["AVISO"] = "PRÉVIA PARA CONFERÊNCIA. Esta vaga está BLOQUEADA: não publicar."
+    documento["payload_previa"] = previa
+    documento["origem_da_previa"] = origem_previa
+    documento["campos_obrigatorios_sem_valor"] = faltando
 
     if anuncio is not None:
         documento["como_conferir"] = (
@@ -394,6 +455,7 @@ def _exportar_bloqueadas(
     totais: collections.Counter[tuple[str, str]] = collections.Counter()
     exportadas: collections.Counter[tuple[str, str]] = collections.Counter()
     indice: list[dict[str, Any]] = []
+    previas: list[dict[str, Any]] = []
 
     for item in resultado.bloqueadas:
         anuncio = por_id.get(str(item.anuncio_id))
@@ -410,9 +472,20 @@ def _exportar_bloqueadas(
         pasta = diretorio / _nome_seguro(motivo) / _nome_seguro(site)
         pasta.mkdir(parents=True, exist_ok=True)
         arquivo = pasta / f"{item.anuncio_id.hex}.json"
+        documento = _documento_bloqueada(item, anuncio)
         arquivo.write_text(
-            json.dumps(_documento_bloqueada(item, anuncio), ensure_ascii=False, indent=2),
+            json.dumps(documento, ensure_ascii=False, indent=2),
             encoding="utf-8",
+        )
+        previas.append(
+            {
+                "NAO_PUBLICAR": "vaga bloqueada, prévia só para conferência",
+                "motivo": motivo,
+                "site": site,
+                "url_anuncio": documento.get("url_anuncio"),
+                "campos_obrigatorios_sem_valor": documento["campos_obrigatorios_sem_valor"],
+                "payload_previa": documento["payload_previa"],
+            }
         )
         indice.append(
             {
@@ -449,6 +522,9 @@ def _exportar_bloqueadas(
             indent=2,
         ),
         encoding="utf-8",
+    )
+    (diretorio / "previas_bloqueadas.json").write_text(
+        json.dumps(previas, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     (diretorio / "indice.json").write_text(
         json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8"
@@ -549,6 +625,7 @@ def executar(argumentos: list[str] | None = None) -> int:
             print()
             print(f"Amostras das vagas bloqueadas em: {diretorio_bloqueadas}")
             print(f"Resumo por motivo e site: {diretorio_bloqueadas / 'resumo.json'}")
+            print(f"Prévias no formato da API: {diretorio_bloqueadas / 'previas_bloqueadas.json'}")
 
         if opcoes.saida_json is not None:
             documento = {

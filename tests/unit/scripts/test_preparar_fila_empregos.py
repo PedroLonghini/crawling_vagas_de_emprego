@@ -128,6 +128,7 @@ def test_exporta_amostra_das_bloqueadas_por_motivo_e_site(tmp_path: Path) -> Non
             url=f"https://www.{host}/vaga/{numero}",
             fonte=SimpleNamespace(value="pagina_carreiras"),
             referencia_bruta="respostas/x.json",
+            id_externo=f"ext-{numero}",
             titulo_original=f"Vaga {numero}",
             empresa_original=None,
             localidade_original=None,
@@ -178,3 +179,10 @@ def test_exporta_amostra_das_bloqueadas_por_motivo_e_site(tmp_path: Path) -> Non
     assert documento["anuncio_extraido"]["tamanho_da_descricao"] == 5000
     assert len(documento["anuncio_extraido"]["descricao_original"]) < 2100
     assert "campos_estruturados_chaves" in documento
+    assert documento["payload_previa"]["title"].startswith("Vaga ")
+    assert documento["payload_previa"]["company"]["nationalRegister"] == "00.000.000/0000-00"
+    assert "company.name" in documento["campos_obrigatorios_sem_valor"]
+    assert "NÃO PUBLICAR".casefold() in documento["AVISO"].casefold().replace("nao", "não")
+    previas = json.loads((pasta / "previas_bloqueadas.json").read_text(encoding="utf-8"))
+    assert len(previas) == 3
+    assert all("NAO_PUBLICAR" in previa for previa in previas)

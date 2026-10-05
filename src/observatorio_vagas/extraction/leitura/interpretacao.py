@@ -509,6 +509,37 @@ def limpar_descricao(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
 
 
+# Consultoria de RH que esconde o cliente: a vaga sai como "confidential" (combinado
+# com o usuário em 05/10/2026). Host -> marca, para recusar a consultoria como empresa.
+CONSULTORIAS_DE_RH = {
+    "michaelpage.com.br": "michael page",
+    "pageexecutive.com": "page executive",
+    "roberthalf.com": "robert half",
+    "roberthalf.com.br": "robert half",
+    "hays.com.br": "hays",
+    "randstad.com.br": "randstad",
+    "adecco.com.br": "adecco",
+    "manpower.com.br": "manpower",
+    "manpowergroup.com.br": "manpower",
+    "gigroup.com.br": "gi group",
+    "robertwalters.com.br": "robert walters",
+}
+NOME_CONFIDENCIAL = "confidential"
+_EMPRESA_CONFIDENCIAL = re.compile(
+    r"\b(empresa|cliente|contratante)\s+(confidencial|sigilos[ao])\b", re.IGNORECASE
+)
+
+
+def consultoria_de_rh(url: str) -> str | None:
+    """Marca da consultoria de RH dona do endereço, ou None."""
+
+    host = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+    for dominio, marca in CONSULTORIAS_DE_RH.items():
+        if host == dominio or host.endswith("." + dominio):
+            return marca
+    return None
+
+
 _SINAIS_DE_CODIGO = re.compile(r"[{}<\\$`=^]|window\.|function\b|=>|\(\?:")
 
 
@@ -835,11 +866,23 @@ def ler_vaga(
                 "documento.hiringOrganization.name",
                 lambda: _organizacao(documento).get("name"),
             ),
+            (
+                "texto.empresa_confidencial",
+                lambda: (
+                    NOME_CONFIDENCIAL if _EMPRESA_CONFIDENCIAL.search(texto_vaga or "") else None
+                ),
+            ),
             ("meta.og:site_name", lambda: None if eh_plataforma else inv.meta.get("og:site_name")),
+            (
+                "consultoria.cliente_oculto",
+                lambda: NOME_CONFIDENCIAL if consultoria_de_rh(url_vaga) else None,
+            ),
         ],
         validar=lambda v: (
             "nome de conta/página de carreiras"
             if re.search(r"^(nova pagina|abler|demo\d*|teste)$", normalizar(str(v)).strip())
+            else "nome da consultoria, não do cliente"
+            if (marca := consultoria_de_rh(url_vaga)) and marca in normalizar(str(v))
             else None
         ),
     )

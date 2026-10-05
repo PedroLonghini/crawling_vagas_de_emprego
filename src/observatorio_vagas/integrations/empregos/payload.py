@@ -221,18 +221,19 @@ def _incluir_campo(
 # pela integração em 2026-10-02, todas as vagas seguem com o CNPJ zerado.
 CNPJ_ZERADO = "00.000.000/0000-00"
 
-# Escrita que a API espera quando a fonte esconde o nome da empresa.
-NOME_EMPRESA_CONFIDENCIAL = "Confidential"
+# Escrita que o JSON de republicação usa quando a fonte esconde o nome da empresa:
+# "confidential", com c minúsculo (confirmado pelo usuário em 05/10/2026).
+NOME_EMPRESA_CONFIDENCIAL = "confidential"
 
 
 def _ajustar_para_a_api(payload: dict[str, Any]) -> None:
-    """Aplica as regras da API que não vêm da fonte: CNPJ zerado e 'Confidential'."""
+    """Aplica as regras da API que não vêm da fonte: CNPJ zerado e 'confidential'."""
 
     empresa = payload.setdefault("company", {})
     empresa["nationalRegister"] = CNPJ_ZERADO
 
     nome = empresa.get("name")
-    if isinstance(nome, str) and nome.strip().casefold() == NOME_EMPRESA_CONFIDENCIAL.casefold():
+    if isinstance(nome, str) and nome.strip().casefold() in ("confidential", "confidencial"):
         empresa["name"] = NOME_EMPRESA_CONFIDENCIAL
 
 

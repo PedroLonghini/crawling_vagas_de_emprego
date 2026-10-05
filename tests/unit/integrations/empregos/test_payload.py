@@ -232,15 +232,15 @@ def test_todo_payload_leva_o_cnpj_zerado_mesmo_com_cnpj_real() -> None:
     assert payload["company"]["nationalRegister"] == "00.000.000/0000-00"
 
 
-def test_confidential_sai_com_c_maiusculo() -> None:
+def test_confidential_sai_com_c_minusculo() -> None:
     from observatorio_vagas.integrations.empregos.payload import _ajustar_para_a_api
 
-    for escrita in ("confidential", "CONFIDENTIAL", " Confidential "):
+    for escrita in ("Confidential", "CONFIDENTIAL", " confidential ", "Confidencial"):
         payload = {"company": {"name": escrita}}
 
         _ajustar_para_a_api(payload)
 
-        assert payload["company"]["name"] == "Confidential"
+        assert payload["company"]["name"] == "confidential"
 
     outro = {"company": {"name": "Confidential Pharma"}}
     _ajustar_para_a_api(outro)

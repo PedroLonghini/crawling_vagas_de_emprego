@@ -396,3 +396,40 @@ def test_macrorregiao_nao_entra_como_estado_e_a_uf_vem_do_texto():
 
 def test_cidade_do_titulo_quando_nada_mais_traz_o_local():
     assert _ler_local({"@type": "WebPage"}, titulo="Vendedor em Recife") == "Recife"
+
+
+def _ler_empresa(
+    url: str, json_ld: dict | None = None, corpo: str = "", site: str = ""
+) -> str | None:
+    meta = f'<meta property="og:site_name" content="{site}">' if site else ""
+    script = f'<script type="application/ld+json">{json.dumps(json_ld)}</script>' if json_ld else ""
+    html = f"<html><head>{meta}{script}</head><body><h1>Analista Fiscal</h1>{corpo}</body></html>"
+    leitura = ler_vaga(
+        montar_inventario(html.encode(), url=url),
+        titulo="Analista Fiscal",
+        id_externo="1",
+        url_vaga=url,
+    )
+    return (leitura.campos.get("company") or {}).get("name")
+
+
+def test_consultoria_que_esconde_o_cliente_vira_confidential():
+    url = "https://www.michaelpage.com.br/job-detail/analista-fiscal/ref/1"
+    vaga = {"@type": "JobPosting", "hiringOrganization": {"name": "Michael Page"}}
+
+    assert _ler_empresa(url, vaga) == "confidential"
+    assert _ler_empresa(url) == "confidential"
+    # Quando a consultoria diz quem é o cliente, o nome dele vale.
+    assert (
+        _ler_empresa(url, {"@type": "JobPosting", "hiringOrganization": {"name": "Vale"}}) == "Vale"
+    )
+
+
+def test_texto_que_diz_empresa_confidencial_vira_confidential():
+    corpo = "<p>Empresa confidencial do ramo varejista contrata analista fiscal.</p>"
+
+    assert (
+        _ler_empresa("https://portal.example/vaga/1", corpo=corpo, site="Portal X")
+        == "confidential"
+    )
+    assert _ler_empresa("https://loja.example/carreiras/1", site="Loja Y") == "Loja Y"

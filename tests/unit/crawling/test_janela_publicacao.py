@@ -87,12 +87,12 @@ def _nova() -> DataPublicacao:
 def test_listagem_esgota_com_tres_velhas_seguidas_na_ordem_da_lista() -> None:
     janela = JanelaPublicacao(horas=24)
 
-    assert janela.registrar("a", VELHA, lista="L", posicao=0)
-    assert janela.registrar("a", VELHA, lista="L", posicao=1)
+    for posicao in range(5):
+        assert janela.registrar("a", VELHA, lista="L", posicao=posicao)
     assert not janela.lista_esgotada("L")
-    assert janela.registrar("a", VELHA, lista="L", posicao=2)
+    assert janela.registrar("a", VELHA, lista="L", posicao=5)
 
-    assert janela.limite_da_lista("L") == 3
+    assert janela.limite_da_lista("L") == 6
     assert not janela.encerrada("a")  # a fonte continua: outras listagens seguem
 
 
@@ -119,7 +119,7 @@ def test_vaga_nova_depois_das_velhas_impede_esgotar() -> None:
 
 def test_listagens_sao_independentes() -> None:
     janela = JanelaPublicacao(horas=24)
-    for posicao in (0, 1, 2):
+    for posicao in range(6):
         janela.registrar("a", VELHA, lista="antiga", posicao=posicao)
 
     assert janela.lista_esgotada("antiga")
@@ -159,7 +159,7 @@ def _middleware(janela: JanelaPublicacao):
 
 def test_middleware_descarta_o_resto_da_lista_esgotada_e_a_pagina_seguinte() -> None:
     janela = JanelaPublicacao(horas=24)
-    for posicao in (0, 1, 2):
+    for posicao in range(6):
         janela.registrar("a", VELHA, lista="L", posicao=posicao)
     middleware, spider = _middleware(janela)
 
@@ -262,3 +262,22 @@ def test_carrega_urls_conhecidas(tmp_path) -> None:
     assert carregar_urls_conhecidas(arquivo) == {"https://a.com/1", "https://a.com/2"}
     assert carregar_urls_conhecidas(None) == frozenset()
     assert carregar_urls_conhecidas(tmp_path / "nao_existe.txt") == frozenset()
+
+
+def test_destaques_velhos_no_topo_nao_esgotam_a_listagem() -> None:
+    """As 3 primeiras posições podem ser vagas fixas antigas; só elas não bastam."""
+
+    janela = JanelaPublicacao(horas=24)
+    for posicao in (0, 1, 2):
+        janela.registrar("a", VELHA, lista="L", posicao=posicao)
+
+    assert not janela.lista_esgotada("L")
+
+
+def test_depois_de_uma_vaga_nova_tres_velhas_seguidas_esgotam() -> None:
+    janela = JanelaPublicacao(horas=24)
+    janela.registrar("a", _nova(), lista="L", posicao=0)
+    for posicao in (1, 2, 3):
+        janela.registrar("a", VELHA, lista="L", posicao=posicao)
+
+    assert janela.limite_da_lista("L") == 4

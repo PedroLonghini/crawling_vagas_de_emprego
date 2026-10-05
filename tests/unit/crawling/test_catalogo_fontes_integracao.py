@@ -13,6 +13,7 @@ from scrapy.http import HtmlResponse
 
 from observatorio_vagas.crawling.contracts import RespostaBruta
 from observatorio_vagas.crawling.spiders.catalogo_fontes import (
+    LOTE_DETALHES,
     CatalogoFontesSpider,
 )
 
@@ -50,8 +51,13 @@ def test_recupera_vinte_cards_quando_proxima_listagem_falha(tmp_path: Path) -> N
     )
     enviados = []
     spider.crawler = SimpleNamespace(engine=SimpleNamespace(crawl=enviados.append))
-    with pytest.raises(DontCloseSpider):
-        spider.retomar_pendentes()
+    # Cada ociosidade libera um lote de detalhes (LOTE_DETALHES) até esvaziar a fila.
+    for _ in range(5):
+        try:
+            spider.retomar_pendentes()
+        except DontCloseSpider:
+            continue
+        break
     detalhes = [
         r for r in [*pedidos, *enviados] if r.meta["observatorio_tipo_pagina"] == "detalhe_vaga"
     ]
@@ -78,10 +84,11 @@ def test_detalhes_nao_esperam_paginacao_com_limites_separados(
         if isinstance(item, Request)
     ]
     detalhes = [r for r in pedidos if r.meta["observatorio_tipo_pagina"] == "detalhe_vaga"]
-    assert len(detalhes) == limite_detalhes
-    assert len({r.url for r in detalhes}) == limite_detalhes
+    primeiro_lote = min(limite_detalhes, LOTE_DETALHES)
+    assert len(detalhes) == primeiro_lote
+    assert len({r.url for r in detalhes}) == primeiro_lote
     assert any("page=2" in r.url for r in pedidos)
-    assert len(spider.detalhes_pendentes["empresa_1"]) == 20 - limite_detalhes
+    assert len(spider.detalhes_pendentes["empresa_1"]) == 20 - primeiro_lote
 
 
 def test_retomada_respeita_limite_sem_manter_spider_aberto(tmp_path: Path) -> None:
@@ -189,8 +196,17 @@ def test_uma_listagem_permite_vinte_detalhes_com_limites_separados(tmp_path: Pat
         for r in spider.parse(criar_resposta(inicial, corpo=corpo), **inicial.cb_kwargs)
         if isinstance(r, Request)
     ]
-    assert len(pedidos) == 20
+    assert len(pedidos) == LOTE_DETALHES
     assert all(r.meta["observatorio_tipo_pagina"] == "detalhe_vaga" for r in pedidos)
+    enviados: list[Request] = []
+    spider.crawler = SimpleNamespace(engine=SimpleNamespace(crawl=enviados.append))
+    for _ in range(5):
+        try:
+            spider.retomar_pendentes()
+        except DontCloseSpider:
+            continue
+        break
+    assert len(pedidos) + len(enviados) == 20
     assert len(spider.urls_agendadas["empresa_1"]) == 21
     crawl = Mock()
     spider.crawler = SimpleNamespace(engine=SimpleNamespace(crawl=crawl))
@@ -579,3 +595,44 @@ def test_spider_gupy_descobre_next_data_sem_ancoras(
         "https://empresa.gupy.io/jobs/10",
         "https://empresa.gupy.io/jobs/20",
     ]
+
+
+def test_cada_detalhe_concluido_libera_o_proximo_do_lote(tmp_path: Path) -> None:
+    spider, inicial = criar_spider_e_requisicao(tmp_path, limite_paginas=25)
+    spider.limite_anuncios = 50
+    corpo = "".join(f'<a href="/vagas/{i}">Vaga {i}</a>' for i in range(12)).encode()
+    pedidos = [
+        r
+        for r in spider.parse(criar_resposta(inicial, corpo=corpo), **inicial.cb_kwargs)
+        if isinstance(r, Request)
+    ]
+    assert len(pedidos) == LOTE_DETALHES
+    assert spider.detalhes_em_voo["empresa_1"] == LOTE_DETALHES
+    assert pedidos[0].meta["observatorio_posicao"] == 0
+
+    enviados: list[Request] = []
+    spider.crawler = SimpleNamespace(engine=SimpleNamespace(crawl=enviados.append))
+    list(spider.parse(criar_resposta(pedidos[0], corpo=b"<h1>Vaga</h1>"), **pedidos[0].cb_kwargs))
+
+    assert [r.url for r in enviados] == ["https://empresa.example/vagas/8"]
+    assert spider.detalhes_em_voo["empresa_1"] == LOTE_DETALHES
+
+
+def test_pedido_descartado_de_proposito_nao_conta_como_falha_da_fonte(tmp_path: Path) -> None:
+    from scrapy.exceptions import IgnoreRequest
+
+    spider, _ = criar_spider_e_requisicao(tmp_path, limite_paginas=25)
+    spider.tratar_falha_download(
+        SimpleNamespace(
+            request=Request(
+                "https://empresa.example/vagas/9",
+                meta={
+                    "observatorio_alvo_id": "empresa_1",
+                    "observatorio_tipo_pagina": "detalhe_vaga",
+                },
+            ),
+            value=IgnoreRequest("listagem esgotada"),
+        )
+    )
+
+    assert spider.falhas_download["empresa_1"] == 0

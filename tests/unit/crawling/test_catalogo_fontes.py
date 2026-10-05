@@ -558,8 +558,8 @@ def test_lista_esgotada_tira_da_fila_so_os_detalhes_seguintes_e_as_paginas_dela(
     )
     spider = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200, janela_horas=24)
     spider.detalhes_pendentes["a"] = {
-        "https://aprovada.example/vaga/3": ("L", 3),
-        "https://aprovada.example/vaga/4": ("L", 4),
+        "https://aprovada.example/vaga/6": ("L", 6),
+        "https://aprovada.example/vaga/7": ("L", 7),
         "https://aprovada.example/vaga/9": ("M", 0),
     }
     spider.navegacao_pendente["a"] = {
@@ -569,7 +569,7 @@ def test_lista_esgotada_tira_da_fila_so_os_detalhes_seguintes_e_as_paginas_dela(
     from datetime import UTC, datetime
 
     velha = DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True)
-    for posicao in (0, 1, 2):
+    for posicao in range(6):
         spider.janela_publicacao.registrar("a", velha, lista="L", posicao=posicao)
 
     spider._podar_lista_esgotada("a", "L")

@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 from urllib.parse import urldefrag, urlsplit
 
 from scrapy import Request, Spider, signals
-from scrapy.exceptions import DontCloseSpider
+from scrapy.exceptions import DontCloseSpider, IgnoreRequest
 from scrapy.http import HtmlResponse
 
 from observatorio_vagas.crawling.adaptadores import selecionar_adaptador
@@ -95,6 +95,10 @@ LIMITE_NAVEGACAO_PADRAO = 100
 # Fonte sem nenhum link de vaga depois de tantas páginas de navegação (ou sitemaps) para.
 PAGINAS_SEM_VAGAS_PARA_ENCERRAR = 20
 SITEMAPS_SEM_VAGAS_PARA_ENCERRAR = 3
+# Detalhes de uma fonte em andamento ao mesmo tempo. Pedir tudo de uma vez fazia
+# o corte por idade chegar tarde: na rodada de 05/10/2026, ~28% das páginas foram
+# baixadas depois de a fonte já ter sido encerrada.
+LOTE_DETALHES = 8
 
 
 class CatalogoFontesSpider(Spider):
@@ -261,6 +265,7 @@ class CatalogoFontesSpider(Spider):
         self.detalhes_reaproveitados: Counter[str] = Counter()
         self.detalhes_novos: Counter[str] = Counter()
         self.detalhes_ja_gravados: Counter[str] = Counter()
+        self.detalhes_em_voo: Counter[str] = Counter()
 
         # O OffsiteMiddleware do Scrapy também bloqueará
         # domínios que não aparecem nesta lista.
@@ -336,29 +341,42 @@ class CatalogoFontesSpider(Spider):
             maximo = limite if self.limite_anuncios is not None else _maximo_listagens(limite)
             proximas = [u for u in navegacao if u not in self.urls_agendadas[alvo_id]]
             proximas = proximas[: max(0, maximo - len(listagens))]
+            # Ociosidade: nada está em andamento; um contador que ficou alto (pedido
+            # descartado sem errback) não pode travar a fonte.
+            self.detalhes_em_voo[alvo_id] = 0
             requisicoes = self._criar_requisicoes(
                 resposta=resposta,
                 urls=(*proximas, *pendentes),
                 urls_agendadas=self.urls_agendadas[alvo_id],
                 navegacao=proximas,
+                maximo_detalhes=LOTE_DETALHES,
             )
             for requisicao in requisicoes:
                 requisicao.errback = self.tratar_falha_download
                 if requisicao.url in navegacao:
                     requisicao.meta["observatorio_tipo_pagina"] = "inicial"
-                    requisicao.meta["observatorio_lista_origem"] = navegacao.get(requisicao.url)
+                    requisicao.meta["observatorio_lista_origem"] = navegacao.get(
+                        requisicao.url
+                    ) or navegacao.get(normalizar_url_vaga(requisicao.url))
                     listagens.add(requisicao.url)
                     navegacao.pop(requisicao.url, None)
                 else:
                     self._marcar_origem_detalhe(requisicao, pendentes.pop(requisicao.url, None))
+                    self.detalhes_em_voo[alvo_id] += 1
                 self.crawler.engine.crawl(requisicao)
                 retomadas += 1
         if retomadas:
             self.logger.info("Detalhes pendentes retomados: %s", retomadas)
             raise DontCloseSpider
 
-    def _criar_requisicoes(self, *, resposta, urls, urls_agendadas, navegacao=()):
-        """Aplica orçamentos independentes sem mudar as barreiras da fábrica."""
+    def _criar_requisicoes(
+        self, *, resposta, urls, urls_agendadas, navegacao=(), maximo_detalhes=None
+    ):
+        """Aplica orçamentos independentes sem mudar as barreiras da fábrica.
+
+        ``maximo_detalhes`` limita quantos detalhes são CRIADOS (o lote em andamento);
+        URL recusada pela fábrica não ocupa vaga.
+        """
         if self.limite_anuncios is None:
             return criar_requisicoes_detalhe(
                 resposta=resposta,
@@ -371,6 +389,8 @@ class CatalogoFontesSpider(Spider):
         limite_listagens = resposta.meta["observatorio_limite_paginas"]
         restantes_listagens = max(0, limite_listagens - len(listagens))
         restantes_detalhes = max(0, self.limite_anuncios - len(urls_agendadas - listagens))
+        if maximo_detalhes is not None:
+            restantes_detalhes = min(restantes_detalhes, maximo_detalhes)
         meta = dict(resposta.meta)
         meta["observatorio_limite_paginas"] = limite_listagens + self.limite_anuncios
         contexto = resposta.replace(request=resposta.request.replace(meta=meta))
@@ -464,6 +484,20 @@ class CatalogoFontesSpider(Spider):
     ) -> Iterator[RespostaBruta | Request]:
         """Preserva a página e descobre detalhes quando permitido."""
 
+        try:
+            yield from self._processar_resposta(response, alvo_id, empresa_nome, fonte)
+        finally:
+            # Só depois de processar (e talvez esgotar a listagem) pede o próximo detalhe.
+            if response.meta.get("observatorio_tipo_pagina") == "detalhe_vaga":
+                self._liberar_vaga_de_detalhe(alvo_id)
+
+    def _processar_resposta(
+        self,
+        response: Response,
+        alvo_id: str,
+        empresa_nome: str,
+        fonte: str,
+    ) -> Iterator[RespostaBruta | Request]:
         self.paginas_recebidas[alvo_id] += 1
         self.resultados_download.setdefault(alvo_id, {})[response.request.url] = {
             "url_final": response.url,
@@ -584,6 +618,7 @@ class CatalogoFontesSpider(Spider):
         if eh_resposta_sitemap(response):
             candidatos = ()
             paginacao: dict[str, None] = {}
+            paginas_seguintes: set[str] = set()
             urls_sitemap.update(self._sitemap_do_proprio_locatario(alvo_id, response))
         else:
             # Analisa somente o HTML que já foi baixado.
@@ -608,6 +643,9 @@ class CatalogoFontesSpider(Spider):
             for candidato in candidatos:
                 evidencias.update(candidato.evidencias)
             paginacao = dict.fromkeys(descobrir_paginacao(response))
+            # Só a paginação da MESMA listagem herda o esgotamento dela; categorias,
+            # endpoints JSON e sitemap são outras listas e nunca são podados.
+            paginas_seguintes = {normalizar_url_vaga(url) for url in paginacao}
             # Endpoints de listagem declarados pelo próprio site são tratados
             # como páginas iniciais: a resposta JSON poderá revelar detalhes
             # de vagas sem abrir o navegador.
@@ -674,6 +712,9 @@ class CatalogoFontesSpider(Spider):
         # Aliases de redirecionamento não consomem duas posições do orçamento.
         urls_navegacao = list(dict.fromkeys(normalizar_url_vaga(u) for u in urls_navegacao))
         urls_detalhe = list(dict.fromkeys(normalizar_url_vaga(u) for u in urls_detalhe))
+        # Conta as vagas da página antes de tirar as já conhecidas: uma fonte cujas
+        # vagas já estão todas gravadas não é 'fonte sem vagas'.
+        vagas_na_pagina = len(urls_detalhe)
         if self.estado_incremental is not None:
             self.estado_incremental.registrar_urls_observadas(
                 alvo_id=alvo_id,
@@ -709,7 +750,7 @@ class CatalogoFontesSpider(Spider):
         urls_detalhe = [url for url in urls_detalhe if url not in self.urls_visitadas[alvo_id]]
         self._verificar_fonte_sem_vagas(
             alvo_id,
-            candidatos_na_pagina=len(urls_detalhe) + len(candidatos),
+            candidatos_na_pagina=vagas_na_pagina + len(candidatos),
             e_sitemap=eh_resposta_sitemap(response),
         )
 
@@ -717,7 +758,9 @@ class CatalogoFontesSpider(Spider):
         for url in urls_navegacao:
             if url not in agendadas:
                 # Guarda de que listagem veio: se ela esgotar, a seguinte também.
-                navegacao_pendente.setdefault(url, response.url)
+                navegacao_pendente.setdefault(
+                    url, response.url if url in paginas_seguintes else None
+                )
         urls_navegacao = [url for url in navegacao_pendente if url not in agendadas]
 
         pendentes = self.detalhes_pendentes.setdefault(alvo_id, {})
@@ -756,16 +799,16 @@ class CatalogoFontesSpider(Spider):
             else:
                 proximas_listagens = proximas_listagens[:1]
 
+            detalhes = list(pendentes)
             if proximas_listagens:
                 # Com orçamentos separados, os detalhes não precisam esperar
                 # a paginação acabar (ou todas as outras fontes ficarem ociosas).
                 # O downloader mantém os limites de concorrência e intervalo.
-                detalhes = list(pendentes)
                 if self.limite_anuncios is None:
                     detalhes = detalhes[:1]
                 urls = [*proximas_listagens, *detalhes]
             else:
-                urls = list(pendentes)
+                urls = detalhes
 
         # A fábrica aplica:
         # - domínio;
@@ -779,6 +822,7 @@ class CatalogoFontesSpider(Spider):
             urls=urls,
             urls_agendadas=agendadas,
             navegacao=urls_navegacao,
+            maximo_detalhes=self._vagas_de_detalhe(alvo_id),
         )
 
         for requisicao in requisicoes:
@@ -800,8 +844,11 @@ class CatalogoFontesSpider(Spider):
                 # Só removemos um detalhe da fila depois que a fábrica criou
                 # a requisição autorizada para ele.
                 self._marcar_origem_detalhe(requisicao, pendentes.pop(requisicao.url, None))
+                self.detalhes_em_voo[alvo_id] += 1
             if requisicao.meta.get("observatorio_tipo_pagina") == "inicial":
-                requisicao.meta["observatorio_lista_origem"] = navegacao_origem.get(requisicao.url)
+                requisicao.meta["observatorio_lista_origem"] = navegacao_origem.get(
+                    requisicao.url
+                ) or navegacao_origem.get(normalizar_url_vaga(requisicao.url))
 
         self.logger.info(
             "Detalhes autorizados: alvo_id=%s agendados=%s",
@@ -826,6 +873,42 @@ class CatalogoFontesSpider(Spider):
 
         # Entrega as requisições aprovadas ao Scrapy.
         yield from requisicoes
+
+    def _vagas_de_detalhe(self, alvo_id: str) -> int:
+        return max(0, LOTE_DETALHES - self.detalhes_em_voo[alvo_id])
+
+    def _proximos_detalhes(self, alvo_id: str) -> list[Request]:
+        """Próximo lote de detalhes pendentes da fonte, na ordem da listagem."""
+
+        resposta = self.respostas_listagem.get(alvo_id)
+        pendentes = self.detalhes_pendentes.get(alvo_id)
+        if resposta is None or not pendentes or self.janela_publicacao.encerrada(alvo_id):
+            return []
+        vagas = self._vagas_de_detalhe(alvo_id)
+        if not vagas:
+            return []
+        requisicoes = self._criar_requisicoes(
+            resposta=resposta,
+            urls=list(pendentes),
+            urls_agendadas=self.urls_agendadas.setdefault(alvo_id, set()),
+            navegacao=(),
+            maximo_detalhes=vagas,
+        )
+        for requisicao in requisicoes:
+            requisicao.errback = self.tratar_falha_download
+            self._marcar_origem_detalhe(requisicao, pendentes.pop(requisicao.url, None))
+            self.detalhes_em_voo[alvo_id] += 1
+        return list(requisicoes)
+
+    def _liberar_vaga_de_detalhe(self, alvo_id: str) -> None:
+        """Um detalhe terminou (com resposta, erro ou descarte): pede o próximo do lote."""
+
+        self.detalhes_em_voo[alvo_id] = max(0, self.detalhes_em_voo[alvo_id] - 1)
+        motor = getattr(getattr(self, "crawler", None), "engine", None)
+        if motor is None:
+            return
+        for requisicao in self._proximos_detalhes(alvo_id):
+            motor.crawl(requisicao)
 
     @staticmethod
     def _marcar_origem_detalhe(requisicao: Request, origem: object) -> None:
@@ -989,6 +1072,12 @@ class CatalogoFontesSpider(Spider):
     def tratar_falha_download(self, falha: Any) -> None:
         """Uma falha de rede/política fica visível, sem interromper outros alvos."""
         alvo_id = falha.request.meta.get("observatorio_alvo_id", "desconhecido")
+        if falha.request.meta.get("observatorio_tipo_pagina") == "detalhe_vaga":
+            self._liberar_vaga_de_detalhe(alvo_id)
+        if isinstance(getattr(falha, "value", None), IgnoreRequest):
+            # Descartado de propósito (listagem esgotada, fonte encerrada, política):
+            # não conta como falha da fonte nem aciona o disjuntor.
+            return
         if self.estado_incremental is not None:
             self.estado_incremental.registrar_falha(alvo_id=alvo_id)
         self.falhas_download[alvo_id] += 1

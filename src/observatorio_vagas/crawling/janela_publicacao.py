@@ -35,6 +35,8 @@ VELHAS_SEGUIDAS_PARA_ENCERRAR = 3
 # e lê apenas as 3 primeiras páginas de listagem (as mais novas).
 LEITURAS_SEM_DATA = 3
 LISTAGENS_SEM_DATA = 3
+# Primeiras posições de uma listagem que podem ser destaques fixos (velhos).
+POSICOES_DE_DESTAQUE = 3
 
 _ISO_DATA = re.compile(r"\d{4}-\d{2}-\d{2}")
 _BR_DATA = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
@@ -212,6 +214,10 @@ class JanelaPublicacao:
             if len(trecho) < seguidas or trecho != list(range(inicio, inicio + seguidas)):
                 continue
             if not all(resultados[p] for p in trecho):
+                continue
+            # Destaques fixos no topo costumam ser velhos: o trecho só vale a partir
+            # da 4ª posição, ou depois de uma vaga nova já vista nesta listagem.
+            if inicio < POSICOES_DE_DESTAQUE and all(resultados[p] for p in posicoes if p < inicio):
                 continue
             # Uma vaga nova DEPOIS do trecho indica que a lista não está em ordem
             # de data; nesse caso não esgotamos nada.

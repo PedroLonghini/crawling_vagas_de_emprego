@@ -21,6 +21,27 @@ TITULOS_GENERICOS = frozenset(
     }
 )
 
+# Páginas de listagem, categoria ou conteúdo editorial não são uma vaga, mesmo que
+# o crawler as tenha marcado como "detalhe": "Vagas em São Paulo", "1.234 vagas",
+# "Jobs in Brazil", blogs, notícias, guias e páginas de profissão ou cidade.
+TITULO_DE_LISTAGEM = re.compile(
+    r"^(\d[\d.,]*\s+)?(vagas|empregos|jobs)\s+(de|em|para|in|at|for|na|no)\b|"
+    r"^\d[\d.,]*\s+(vagas|empregos|jobs)\b|^(todas as )?vagas( de emprego)?$|"
+    r"^trabalhe conosco\b|^(encontre|busque|procure)\b.*\bvagas\b",
+    re.IGNORECASE,
+)
+CAMINHO_EDITORIAL = re.compile(
+    r"/(blog|noticias?|not[ií]cias?|artigos?|guias?|dicas|cursos?|profiss(ao|oes|[ãa]o|[õo]es)|"
+    r"cidades?|categorias?|tag|tags|sobre|imprensa|estudos?-e-tendencias|observatorio|"
+    r"denunciar)(/|$)",
+    re.IGNORECASE,
+)
+TEXTO_DE_COOKIES = re.compile(
+    r"(necessary|essential|necess[aá]rios?)\b.*\bcookies?|cookies?\b.*\b(consent|aceit|accept|"
+    r"pol[ií]tica de privacidade|privacy)",
+    re.IGNORECASE | re.DOTALL,
+)
+
 # Rótulos explícitos podem aparecer em parágrafos vizinhos. O seletor HTML
 # entrega alguns desses textos como uma sequência única; esta lista impede que
 # o valor de um campo absorva o rótulo do próximo.
@@ -454,11 +475,9 @@ def extrair_job_posting_html_generico(
     )
     descricao_seletores = (
         "string(//*[@itemprop='description'][1])",
-        "string(//*[contains(concat(' ', normalize-space(@class), ' '), "
-        "' job-description ')][1])",
+        "string(//*[contains(concat(' ', normalize-space(@class), ' '), ' job-description ')][1])",
         "string(//*[@id='job-description'][1])",
-        "string(//*[contains(concat(' ', normalize-space(@class), ' '), "
-        "' vagas-container ')][1])",
+        "string(//*[contains(concat(' ', normalize-space(@class), ' '), ' vagas-container ')][1])",
         "string(//*[contains(@class, 'description')][1])",
         "//meta[@property='og:description']/@content",
         "//meta[@name='description']/@content",
@@ -482,7 +501,10 @@ def extrair_job_posting_html_generico(
     if titulo is None or titulo.casefold() in TITULOS_GENERICOS:
         return ResultadoHTMLGenerico(vagas=())
 
-    if descricao is None:
+    if TITULO_DE_LISTAGEM.search(titulo) or CAMINHO_EDITORIAL.search(urlsplit(url).path):
+        return ResultadoHTMLGenerico(vagas=())
+
+    if descricao is None or TEXTO_DE_COOKIES.search(descricao):
         return ResultadoHTMLGenerico(vagas=())
 
     empresa = _primeiro_texto(

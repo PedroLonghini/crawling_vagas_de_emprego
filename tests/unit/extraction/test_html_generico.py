@@ -276,3 +276,47 @@ def test_extrai_campos_em_tabela_e_lista_de_definicao_sem_dois_pontos() -> None:
     assert vaga["validThrough"] == "2026-09-14"
     assert vaga["baseSalary"]["value"]["minValue"] == "8000.00"
     assert vaga["baseSalary"]["value"]["maxValue"] == "10000.00"
+
+
+DESCRICAO_LONGA = "Responsabilidades: atender clientes, organizar rotinas e apoiar a equipe. " * 5
+
+
+def _extrair(titulo: str, url: str, descricao: str = DESCRICAO_LONGA):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f"<html><head><title>{titulo}</title></head><body><h1>{titulo}</h1>"
+        f'<div class="job-description">{descricao}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="Empresa")
+
+
+def test_vaga_real_continua_sendo_extraida() -> None:
+    assert _extrair("Analista Administrativo", "https://empresa.example/vagas/123").vagas
+
+
+def test_paginas_de_listagem_nao_viram_vaga() -> None:
+    for titulo in (
+        "Vagas de Técnico Químico",
+        "494 Vagas de Oficial de Manutenção",
+        "8676 Vagas de Emprego em São José dos Campos/SP",
+        "Jobs in Crato",
+        "Trabalhe conosco",
+    ):
+        assert not _extrair(titulo, "https://empresa.example/vagas/123").vagas, titulo
+
+
+def test_conteudo_editorial_nao_vira_vaga() -> None:
+    for caminho in (
+        "/blog/como-ser-analista",
+        "/noticias/x",
+        "/profissoes/tecnico",
+        "/observatorio/",
+    ):
+        assert not _extrair("Analista de dados", f"https://empresa.example{caminho}").vagas, caminho
+
+
+def test_texto_de_cookies_nao_vale_como_descricao() -> None:
+    cookies = "Necessary cookies are essential for the website to function. " * 5
+
+    assert not _extrair("Analista", "https://empresa.example/vagas/1", cookies).vagas

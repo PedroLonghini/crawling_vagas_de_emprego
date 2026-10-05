@@ -10,11 +10,14 @@ no lote de 2.448 vagas.
 
 from __future__ import annotations
 
+import csv
 import re
 import unicodedata
 from dataclasses import dataclass
 from datetime import date
 from decimal import Decimal, InvalidOperation
+from functools import lru_cache
+from pathlib import Path
 
 
 def normalizar(texto: str) -> str:
@@ -313,6 +316,38 @@ CIDADES_CONHECIDAS = frozenset(
         "canoas", "pelotas", "santa maria", "gravatai", "sao leopoldo",
     }
 )  # fmt: skip
+ARQUIVO_MUNICIPIOS = Path(__file__).resolve().parents[4] / "config" / "municipios_ibge.csv"
+# Nome repetido em mais de uma UF: vale a cidade grande (Palmas-TO, não Palmas-PR).
+UF_DA_CIDADE_GRANDE = {
+    "palmas": "TO", "santa maria": "RS", "cascavel": "PR", "belem": "PA", "boa vista": "RR",
+    "campo grande": "MS", "rio branco": "AC", "santo andre": "SP",
+}  # fmt: skip
+
+
+@lru_cache(maxsize=1)
+def _ufs_por_municipio() -> dict[str, frozenset[str]]:
+    """Município (normalizado) -> UFs onde existe, pela lista oficial do IBGE."""
+
+    ufs: dict[str, set[str]] = {}
+    try:
+        with ARQUIVO_MUNICIPIOS.open(encoding="utf-8", newline="") as arquivo:
+            for linha in csv.DictReader(arquivo):
+                ufs.setdefault(normalizar(linha["nome"]), set()).add(linha["uf"])
+    except OSError:
+        return {}
+    return {nome: frozenset(siglas) for nome, siglas in ufs.items()}
+
+
+def uf_da_cidade(cidade: str) -> str | None:
+    """UF de um município pelo nome, só quando não há dúvida (nome único ou cidade grande)."""
+
+    nome = normalizar(cidade).strip()
+    if nome in UF_DA_CIDADE_GRANDE:
+        return UF_DA_CIDADE_GRANDE[nome]
+    siglas = _ufs_por_municipio().get(nome, frozenset())
+    return next(iter(siglas)) if len(siglas) == 1 else None
+
+
 _CIDADE_NO_TITULO = re.compile(
     rf"\b(?:em|para)\s+(?P<cidade>{_NOME_CIDADE})(?:\s*[-–/,]\s*(?P<uf>{_UFS}))?"
     rf"\s*(?:[|\-–(]|$)"
@@ -332,7 +367,9 @@ def cidade_do_titulo(titulo: str, origem: str) -> Leitura | None:
         if achado["uf"] and (conhecida or achado.group().lstrip().startswith("em")):
             return Leitura(f"{cidade}, {achado['uf']}", origem, achado.group().strip())
         if conhecida:
-            return Leitura(cidade, origem, achado.group().strip())
+            uf = uf_da_cidade(cidade)
+            valor = f"{cidade}, {uf}" if uf else cidade
+            return Leitura(valor, origem, achado.group().strip())
     return None
 
 

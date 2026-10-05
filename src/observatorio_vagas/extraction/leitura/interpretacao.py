@@ -38,6 +38,7 @@ from observatorio_vagas.extraction.leitura.texto_livre import (
     interpretar_salario,
     interpretar_vinculo,
     normalizar,
+    uf_da_cidade,
 )
 
 # Abaixo disso, é marcador de "não informado" (ex.: R$ 0,01 na Abler).
@@ -1046,6 +1047,11 @@ def ler_vaga(
             if valor and normalizar(valor).startswith(normalizar(str(endereco)) + ","):
                 endereco = valor
                 break
+        else:
+            # Senão, a UF vem da lista de municípios do IBGE, se o nome não deixa dúvida.
+            uf = uf_da_cidade(str(endereco))
+            if uf:
+                endereco = f"{str(endereco).strip()}, {uf}"
     if endereco:
         local["address"] = limpar_texto(str(endereco))
     cep = _primeiro(

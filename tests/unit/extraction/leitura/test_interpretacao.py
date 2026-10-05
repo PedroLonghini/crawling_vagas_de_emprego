@@ -390,12 +390,15 @@ def test_macrorregiao_nao_entra_como_estado_e_a_uf_vem_do_texto():
         "jobLocation": {"address": {"addressLocality": "Recife", "addressRegion": "Nordeste"}},
     }
 
-    assert _ler_local(vaga) == "Recife"
+    # Sem UF no texto, ela vem da lista do IBGE (Recife só existe em PE).
+    assert _ler_local(vaga) == "Recife, PE"
     assert _ler_local(vaga, corpo="<p>Local de trabalho: Recife - PE</p>") == "Recife, PE"
+    bom_jesus = {**vaga, "jobLocation": {"address": {"addressLocality": "Bom Jesus"}}}
+    assert _ler_local(bom_jesus) == "Bom Jesus"
 
 
 def test_cidade_do_titulo_quando_nada_mais_traz_o_local():
-    assert _ler_local({"@type": "WebPage"}, titulo="Vendedor em Recife") == "Recife"
+    assert _ler_local({"@type": "WebPage"}, titulo="Vendedor em Recife") == "Recife, PE"
 
 
 def _ler_empresa(

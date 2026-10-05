@@ -217,7 +217,8 @@ def test_cidade_no_titulo() -> None:
         leitura = cidade_do_titulo(titulo, "titulo")
         return leitura.valor if leitura else None
 
-    assert cidade("Vaga: Vendedor em Recife") == "Recife"
+    assert cidade("Vaga: Vendedor em Recife") == "Recife, PE"
+    assert cidade("Analista em Palmas") == "Palmas, TO"
     assert cidade("Analista em Campinas - SP") == "Campinas, SP"
     assert cidade("Operador em Sapucaia do Sul/RS (temporário)") == "Sapucaia do Sul, RS"
     assert cidade("Analista em Tecnologia") is None
@@ -226,6 +227,15 @@ def test_cidade_no_titulo() -> None:
     assert cidade("Vaga para Cuidador de Idoso, SP") is None
     assert cidade("Vendedor para Campinas - SP") == "Campinas, SP"
     assert cidade("Vaga em São José") is None
+
+
+def test_uf_da_cidade_pela_lista_do_ibge() -> None:
+    from observatorio_vagas.extraction.leitura.texto_livre import uf_da_cidade
+
+    assert uf_da_cidade("Maringá") == "PR"
+    assert uf_da_cidade("sao jose dos campos") == "SP"
+    assert uf_da_cidade("Bom Jesus") is None  # existe em vários estados
+    assert uf_da_cidade("Tecnologia") is None
 
 
 def test_uf_colada_e_rotulo_de_tres_palavras() -> None:

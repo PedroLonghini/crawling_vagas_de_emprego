@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import argparse
+import collections
 import json
+import re
 import sys
 from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from observatorio_vagas.config import get_settings
 from observatorio_vagas.crawling.catalog import AlvoColeta, carregar_alvos_csv
@@ -82,6 +85,20 @@ def criar_parser() -> argparse.ArgumentParser:
             "diretório-base para exportar payloads elegíveis em JSON; "
             "não chama a API nem grava no MongoDB"
         ),
+    )
+    parser.add_argument(
+        "--diretorio-bloqueadas",
+        type=Path,
+        help=(
+            "exporta amostras das vagas BLOQUEADAS, com o que foi lido de cada uma, "
+            "para conferir se a coleta leu tudo; não chama a API nem grava no MongoDB"
+        ),
+    )
+    parser.add_argument(
+        "--amostra-bloqueadas",
+        type=int,
+        default=3,
+        help="máximo de vagas exportadas por motivo e por site (padrão: 3)",
     )
     return parser
 
@@ -284,6 +301,161 @@ def _exportar_payloads_locais(
     return diretorio_lote
 
 
+def _cortar(valor: Any, limite: int = 600) -> Any:
+    """Evita arquivos gigantes: textos longos são cortados, com o tamanho original."""
+
+    if isinstance(valor, str) and len(valor) > limite:
+        return f"{valor[:limite]}... [{len(valor)} caracteres]"
+    return valor
+
+
+def _nome_seguro(texto: str) -> str:
+    return re.sub(r"[^a-zA-Z0-9._-]+", "_", texto)[:60] or "sem_nome"
+
+
+def _documento_bloqueada(item: ItemFilaEmpregos, anuncio: Any | None) -> dict[str, Any]:
+    """Tudo o que foi lido de uma vaga bloqueada, para comparar com a página."""
+
+    preparacao = item.preparacao
+    documento: dict[str, Any] = {
+        "anuncio_id": str(item.anuncio_id),
+        "alvo_id": item.alvo_id,
+        "titulo": item.titulo,
+        "situacao": item.situacao.value,
+        "campos_preenchidos": f"{item.campos_preenchidos}/{item.total_campos}",
+        "bloqueios": [_motivo_para_json(motivo) for motivo in item.bloqueios],
+        "alertas": [_motivo_para_json(motivo) for motivo in item.alertas],
+    }
+
+    if anuncio is not None:
+        documento["como_conferir"] = (
+            "Abra url_anuncio no navegador e compare com anuncio_extraido; o HTML "
+            "original está em data/raw/<referencia_bruta>."
+        )
+        documento["url_anuncio"] = str(anuncio.url)
+        documento["fonte"] = anuncio.fonte.value
+        documento["referencia_bruta"] = anuncio.referencia_bruta
+        extraido = {
+            "titulo_original": anuncio.titulo_original,
+            "empresa_original": anuncio.empresa_original,
+            "localidade_original": anuncio.localidade_original,
+            "endereco_original": anuncio.endereco_original,
+            "cep_original": anuncio.cep_original,
+            "salario_original": anuncio.salario_original,
+            "modalidade_original": anuncio.modalidade_original,
+            "regime_original": anuncio.regime_original,
+            "senioridade_original": anuncio.senioridade_original,
+            "publicado_em": str(anuncio.publicado_em) if anuncio.publicado_em else None,
+            "expira_em": str(anuncio.expira_em) if anuncio.expira_em else None,
+            "url_candidatura": (str(anuncio.url_candidatura) if anuncio.url_candidatura else None),
+            "descricao_original": _cortar(anuncio.descricao_original, 2000),
+            "tamanho_da_descricao": len(anuncio.descricao_original),
+        }
+        documento["anuncio_extraido"] = {
+            nome: _cortar(valor) if nome != "descricao_original" else valor
+            for nome, valor in extraido.items()
+        }
+        documento["campos_estruturados_chaves"] = sorted(anuncio.campos_estruturados)
+
+    if preparacao is not None:
+        documento["campos_da_api"] = [
+            {
+                "campo": campo.campo,
+                "obrigatorio": campo.obrigatorio,
+                "situacao": campo.situacao.value,
+                "valor": _cortar(campo.valor),
+                "mensagem": campo.mensagem,
+            }
+            for campo in preparacao.relatorio.campos
+        ]
+        documento["diagnostico_da_leitura"] = preparacao.diagnostico_leitura
+    else:
+        documento["campos_da_api"] = (
+            "não avaliados: a vaga parou antes, na associação com a empresa"
+        )
+
+    return documento
+
+
+def _exportar_bloqueadas(
+    resultado: ResultadoFilaEmpregos,
+    anuncios: tuple[Any, ...],
+    *,
+    diretorio_base: Path,
+    gerado_em: datetime,
+    amostra: int,
+) -> Path:
+    """Grava amostras de vagas bloqueadas por motivo e site, mais um resumo geral."""
+
+    por_id = {str(anuncio.id): anuncio for anuncio in anuncios}
+    diretorio = diretorio_base / gerado_em.strftime("bloqueadas-%Y%m%dT%H%M%S%fZ")
+    diretorio.mkdir(parents=True)
+
+    totais: collections.Counter[tuple[str, str]] = collections.Counter()
+    exportadas: collections.Counter[tuple[str, str]] = collections.Counter()
+    indice: list[dict[str, Any]] = []
+
+    for item in resultado.bloqueadas:
+        anuncio = por_id.get(str(item.anuncio_id))
+        host = urlsplit(str(anuncio.url)).hostname if anuncio else None
+        site = (host or "?").removeprefix("www.")
+        motivo = item.bloqueios[0].codigo if item.bloqueios else "sem_motivo"
+        chave = (motivo, site)
+        totais[chave] += 1
+
+        if exportadas[chave] >= amostra:
+            continue
+
+        exportadas[chave] += 1
+        pasta = diretorio / _nome_seguro(motivo) / _nome_seguro(site)
+        pasta.mkdir(parents=True, exist_ok=True)
+        arquivo = pasta / f"{item.anuncio_id.hex}.json"
+        arquivo.write_text(
+            json.dumps(_documento_bloqueada(item, anuncio), ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        indice.append(
+            {
+                "motivo": motivo,
+                "site": site,
+                "titulo": item.titulo,
+                "url": str(anuncio.url) if anuncio else None,
+                "arquivo": str(arquivo.relative_to(diretorio)),
+            }
+        )
+
+    por_motivo: collections.Counter[str] = collections.Counter()
+    for (motivo, _), total in totais.items():
+        por_motivo[motivo] += total
+
+    resumo = [
+        {
+            "motivo": motivo,
+            "site": site,
+            "bloqueadas": total,
+            "exportadas": exportadas[(motivo, site)],
+        }
+        for (motivo, site), total in totais.most_common()
+    ]
+    (diretorio / "resumo.json").write_text(
+        json.dumps(
+            {
+                "gerado_em": gerado_em.isoformat(),
+                "total_bloqueadas": sum(totais.values()),
+                "por_motivo": dict(por_motivo.most_common()),
+                "por_motivo_e_site": resumo,
+            },
+            ensure_ascii=False,
+            indent=2,
+        ),
+        encoding="utf-8",
+    )
+    (diretorio / "indice.json").write_text(
+        json.dumps(indice, ensure_ascii=False, indent=2), encoding="utf-8"
+    )
+    return diretorio
+
+
 def executar(argumentos: list[str] | None = None) -> int:
     """Consulta o banco e produz a fila sem qualquer mutação."""
 
@@ -365,6 +537,18 @@ def executar(argumentos: list[str] | None = None) -> int:
             print(f"Payloads unificados: {diretorio_payloads / 'payloads_unificados.json'}")
             print("Chamadas HTTP: 0")
             print("Gravações no MongoDB: 0")
+
+        if opcoes.diretorio_bloqueadas is not None:
+            diretorio_bloqueadas = _exportar_bloqueadas(
+                resultado,
+                tuple(anuncios),
+                diretorio_base=opcoes.diretorio_bloqueadas,
+                gerado_em=gerado_em,
+                amostra=max(1, opcoes.amostra_bloqueadas),
+            )
+            print()
+            print(f"Amostras das vagas bloqueadas em: {diretorio_bloqueadas}")
+            print(f"Resumo por motivo e site: {diretorio_bloqueadas / 'resumo.json'}")
 
         if opcoes.saida_json is not None:
             documento = {

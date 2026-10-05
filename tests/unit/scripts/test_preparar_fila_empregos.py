@@ -10,6 +10,7 @@ from scripts import preparar_fila_empregos
 from observatorio_vagas.integrations.empregos import (
     ItemFilaEmpregos,
     MotivoFilaEmpregos,
+    ResultadoFilaEmpregos,
     SituacaoItemFilaEmpregos,
 )
 from observatorio_vagas.integrations.empregos.preparacao import (
@@ -116,3 +117,64 @@ def test_exporta_payload_e_manifesto_sem_operacao_externa(tmp_path: Path) -> Non
     assert '"proveniencia_fonte": null' in payload
     assert '"arquivo_payloads_unificados": "payloads_unificados.json"' in manifesto
     assert payloads_unificados == [{"title": "Pessoa Desenvolvedora"}]
+
+
+def test_exporta_amostra_das_bloqueadas_por_motivo_e_site(tmp_path: Path) -> None:
+    from types import SimpleNamespace
+
+    def anuncio(numero: int, host: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            id=UUID(f"20000000-0000-4000-8000-{numero:012d}"),
+            url=f"https://www.{host}/vaga/{numero}",
+            fonte=SimpleNamespace(value="pagina_carreiras"),
+            referencia_bruta="respostas/x.json",
+            titulo_original=f"Vaga {numero}",
+            empresa_original=None,
+            localidade_original=None,
+            endereco_original=None,
+            cep_original=None,
+            salario_original=None,
+            modalidade_original=None,
+            regime_original=None,
+            senioridade_original=None,
+            publicado_em=None,
+            expira_em=None,
+            url_candidatura=None,
+            descricao_original="x" * 5000,
+            campos_estruturados={"title": "t", "_leitura": {}},
+        )
+
+    def item(a: SimpleNamespace) -> ItemFilaEmpregos:
+        return ItemFilaEmpregos(
+            anuncio_id=a.id,
+            alvo_id="alvo",
+            titulo=a.titulo_original,
+            empresa_id=None,
+            vaga_id=None,
+            situacao=SituacaoItemFilaEmpregos.BLOQUEADA,
+            bloqueios=(MotivoFilaEmpregos("empresa_nao_associada", None, "sem empresa"),),
+        )
+
+    anuncios = tuple(anuncio(n, "a.example") for n in range(1, 6)) + (anuncio(9, "b.example"),)
+    resultado = ResultadoFilaEmpregos(itens=tuple(item(a) for a in anuncios))
+
+    pasta = preparar_fila_empregos._exportar_bloqueadas(
+        resultado,
+        anuncios,
+        diretorio_base=tmp_path,
+        gerado_em=datetime(2026, 10, 5, tzinfo=UTC),
+        amostra=2,
+    )
+
+    resumo = json.loads((pasta / "resumo.json").read_text(encoding="utf-8"))
+    assert resumo["total_bloqueadas"] == 6
+    assert resumo["por_motivo"] == {"empresa_nao_associada": 6}
+    por_site = {r["site"]: (r["bloqueadas"], r["exportadas"]) for r in resumo["por_motivo_e_site"]}
+    assert por_site == {"a.example": (5, 2), "b.example": (1, 1)}
+    arquivos = list((pasta / "empresa_nao_associada" / "a.example").glob("*.json"))
+    assert len(arquivos) == 2
+    documento = json.loads(arquivos[0].read_text(encoding="utf-8"))
+    assert documento["url_anuncio"].startswith("https://www.a.example/vaga/")
+    assert documento["anuncio_extraido"]["tamanho_da_descricao"] == 5000
+    assert len(documento["anuncio_extraido"]["descricao_original"]) < 2100
+    assert "campos_estruturados_chaves" in documento

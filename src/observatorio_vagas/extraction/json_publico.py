@@ -24,6 +24,13 @@ _CHAVES_DESCRICAO = ("description", "jobDescription", "job_description", "detail
 _CHAVES_ID = ("id", "jobId", "job_id", "vacancyId", "vacancy_id", "code")
 _CHAVES_URL = ("detailUrl", "detail_url", "jobUrl", "job_url", "postingUrl", "url")
 _CHAVES_LOCAL = ("location", "city", "locality", "workplace")
+# Empresa que contrata: SmartRecruiters traz company.name; Sólides, companyName.
+_CHAVES_EMPRESA = (
+    "companyName", "company_name", "employerName", "employer_name", "hiringOrganization",
+    "company", "employer",
+)  # fmt: skip
+_CHAVES_UF = ("state", "uf", "region", "addressRegion")
+_CHAVES_PAIS = ("country", "countryCode", "addressCountry")
 DOMINIO_API_ABLER = "hulk-smash.abler.com.br"
 
 
@@ -35,13 +42,39 @@ def _texto(valor: object) -> str | None:
 
 
 def _objetos(valor: object) -> Iterator[Mapping[str, object]]:
+    """Objetos candidatos a vaga, sem entrar dentro de uma vaga já encontrada.
+
+    Dentro da vaga, estado, cidade, nível e benefícios também têm ``id`` e ``name``
+    ({"id": 20, "name": "São Paulo"}); lidos como objetos soltos, viravam vagas
+    ("São Paulo", "CLT", "Refeitório" — 13 de 20 numa página da Sólides).
+    """
+
     if isinstance(valor, Mapping):
         yield valor
+        if _parece_vaga(valor) and not _tem_lista_de_objetos(valor):
+            return
         for filho in valor.values():
             yield from _objetos(filho)
     elif isinstance(valor, list):
         for filho in valor:
             yield from _objetos(filho)
+
+
+def _parece_vaga(objeto: Mapping[str, object]) -> bool:
+    titulo = _primeiro(objeto, _CHAVES_TITULO)
+    return bool(titulo) and bool(
+        _primeiro(objeto, _CHAVES_DESCRICAO) or any(objeto.get(c) for c in _CHAVES_URL)
+    )
+
+
+def _tem_lista_de_objetos(objeto: Mapping[str, object]) -> bool:
+    """Envelope com uma lista de vagas dentro ({"name": "Empresa", "jobs": [...]})."""
+
+    return any(
+        isinstance(filho, list)
+        and any(_parece_vaga(item) for item in filho if isinstance(item, Mapping))
+        for filho in objeto.values()
+    )
 
 
 def _primeiro(objeto: Mapping[str, object], chaves: tuple[str, ...]) -> str | None:
@@ -62,6 +95,36 @@ def _localidade(valor: object) -> str | None:
     if isinstance(valor, Mapping):
         return _primeiro(valor, ("name", "city", "locality", "label"))
     return _texto(valor)
+
+
+def _nome(valor: object) -> str | None:
+    """Texto solto ou o ``name`` de um objeto ({"name": "Red Bull"})."""
+
+    if isinstance(valor, Mapping):
+        return _primeiro(valor, ("name", "label", "title"))
+    return _texto(valor)
+
+
+def _empresa(objeto: Mapping[str, object]) -> str | None:
+    return next((nome for chave in _CHAVES_EMPRESA if (nome := _nome(objeto.get(chave)))), None)
+
+
+def _uf_e_pais(objeto: Mapping[str, object]) -> tuple[str | None, str | None]:
+    """UF e país do objeto da vaga ou do seu ``location`` (Sólides: state.code)."""
+
+    fontes = [objeto]
+    if isinstance(objeto.get("location"), Mapping):
+        fontes.append(objeto["location"])  # type: ignore[arg-type]
+    uf = pais = None
+    for fonte in fontes:
+        for chave in _CHAVES_UF:
+            valor = fonte.get(chave)
+            if isinstance(valor, Mapping):
+                valor = _primeiro(valor, ("code", "sigla", "abbreviation", "name"))
+            uf = uf or _texto(valor)
+        for chave in _CHAVES_PAIS:
+            pais = pais or _nome(fonte.get(chave))
+    return uf, pais
 
 
 def extrair_vagas_json_publico(
@@ -90,6 +153,9 @@ def extrair_vagas_json_publico(
     for objeto in _objetos(dados):
         titulo = _primeiro(objeto, _CHAVES_TITULO)
         if titulo is None or len(titulo) < 3:
+            continue
+        # Envelope (empresa, página de resultados) com a lista de vagas dentro.
+        if _tem_lista_de_objetos(objeto):
             continue
         identificador = _primeiro(objeto, _CHAVES_ID)
         url_detalhe = next(
@@ -122,11 +188,17 @@ def extrair_vagas_json_publico(
             "_observatorio_apply_url": url_detalhe or url,
             "_observatorio_extrator": "json_publico",
         }
+        empresa = _empresa(objeto)
+        if empresa:
+            documento["hiringOrganization"] = {"@type": "Organization", "name": empresa}
         if localidade:
-            documento["jobLocation"] = {
-                "@type": "Place",
-                "address": {"addressLocality": localidade},
-            }
+            endereco: dict[str, str] = {"addressLocality": localidade}
+            uf, pais = _uf_e_pais(objeto)
+            if uf and uf != localidade:
+                endereco["addressRegion"] = uf
+            if pais:
+                endereco["addressCountry"] = pais
+            documento["jobLocation"] = {"@type": "Place", "address": endereco}
         vagas.setdefault(chave, documento)
     return ResultadoJsonPublico(tuple(vagas.values()))
 

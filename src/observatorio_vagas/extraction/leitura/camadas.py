@@ -196,6 +196,14 @@ def montar_inventario(
             inventario.meta.setdefault(chave, meta.get("content", "").strip())
     for link in raiz.xpath('//link[@rel="canonical"][@href]'):
         inventario.meta["canonical"] = link.get("href")
+    # Microdata schema.org (SmartRecruiters e outros ATS): a empresa vem em
+    # <div itemprop="hiringOrganization"><meta itemprop="name" content="Red Bull">.
+    for organizacao in raiz.xpath('//*[@itemprop="hiringOrganization"]'):
+        nomes = organizacao.xpath('.//*[@itemprop="name"]')
+        nome = (nomes[0].get("content") or _texto(nomes[0]) or "").strip() if nomes else ""
+        if nome:
+            inventario.meta.setdefault("microdata:hiringOrganization", nome)
+            break
 
     titulos = raiz.xpath("//title")
     inventario.titulo_documento = _texto(titulos[0]) if titulos else None

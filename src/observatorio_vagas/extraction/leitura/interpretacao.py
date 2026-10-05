@@ -868,6 +868,10 @@ def ler_vaga(
                 lambda: _organizacao(documento).get("name"),
             ),
             (
+                "microdata.hiringOrganization.name",
+                lambda: inv.meta.get("microdata:hiringOrganization"),
+            ),
+            (
                 "texto.empresa_confidencial",
                 lambda: (
                     NOME_CONFIDENCIAL if _EMPRESA_CONFIDENCIAL.search(texto_vaga or "") else None

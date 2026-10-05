@@ -436,3 +436,12 @@ def test_texto_que_diz_empresa_confidencial_vira_confidential():
         == "confidential"
     )
     assert _ler_empresa("https://loja.example/carreiras/1", site="Loja Y") == "Loja Y"
+
+
+def test_empresa_em_microdata_da_pagina():
+    corpo = (
+        '<div itemprop="hiringOrganization" itemscope itemtype="http://schema.org/Organization">'
+        '<meta itemprop="name" content="Red Bull"></div>'
+    )
+
+    assert _ler_empresa("https://jobs.smartrecruiters.com/RedBull/1", corpo=corpo) == "Red Bull"

@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Self
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from scrapy.exceptions import IgnoreRequest, NotSupported
@@ -255,6 +256,12 @@ class JanelaPublicacao:
         return frozenset(self._encerradas)
 
 
+def dominio_de(url: str) -> str:
+    """Host da URL sem ``www.``, em minúsculas."""
+
+    return (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+
+
 def carregar_urls_conhecidas(caminho: Path | None) -> frozenset[str]:
     """Lê o arquivo (uma URL por linha) com as vagas já gravadas no MongoDB."""
 
@@ -280,6 +287,10 @@ class EncerramentoPorIdadeDownloaderMiddleware:
         spider = spider or getattr(self._crawler, "spider", None)
         janela: JanelaPublicacao | None = getattr(spider, "janela_publicacao", None)
         alvo_id = request.meta.get("observatorio_alvo_id")
+
+        if dominio_de(request.url) in getattr(spider, "dominios_bloqueados", ()):
+            self._crawler.stats.inc_value("observatorio/janela/dominio_bloqueado")
+            raise IgnoreRequest("o domínio está recusando o robô (403/429 seguidos)")
 
         if janela is None or not isinstance(alvo_id, str):
             return None

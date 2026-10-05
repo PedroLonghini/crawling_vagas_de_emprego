@@ -636,3 +636,33 @@ def test_pedido_descartado_de_proposito_nao_conta_como_falha_da_fonte(tmp_path: 
     )
 
     assert spider.falhas_download["empresa_1"] == 0
+
+
+def test_dominio_que_responde_403_seguidos_para_de_ser_pedido(tmp_path: Path) -> None:
+    from scrapy.exceptions import IgnoreRequest
+
+    from observatorio_vagas.crawling.janela_publicacao import (
+        EncerramentoPorIdadeDownloaderMiddleware,
+    )
+    from observatorio_vagas.crawling.spiders.catalogo_fontes import BLOQUEIOS_SEGUIDOS_PARA_PARAR
+
+    spider, inicial = criar_spider_e_requisicao(tmp_path, limite_paginas=25)
+    for n in range(BLOQUEIOS_SEGUIDOS_PARA_PARAR - 1):
+        spider._contar_bloqueio(HtmlResponse(url=f"https://www.empresa.example/v/{n}", status=403))
+    assert "empresa.example" not in spider.dominios_bloqueados
+
+    # Uma resposta boa zera a contagem.
+    spider._contar_bloqueio(HtmlResponse(url="https://empresa.example/ok", status=200))
+    for n in range(BLOQUEIOS_SEGUIDOS_PARA_PARAR):
+        spider._contar_bloqueio(HtmlResponse(url=f"https://empresa.example/v/{n}", status=403))
+    assert "empresa.example" in spider.dominios_bloqueados
+
+    class Estatisticas:
+        def inc_value(self, *_: object) -> None: ...
+
+    middleware = EncerramentoPorIdadeDownloaderMiddleware(
+        SimpleNamespace(stats=Estatisticas(), spider=spider)
+    )
+    with pytest.raises(IgnoreRequest):
+        middleware.process_request(Request("https://www.empresa.example/v/99"), spider)
+    middleware.process_request(Request("https://outra.example/v/1"), spider)

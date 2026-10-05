@@ -24,6 +24,7 @@ from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregat
 from observatorio_vagas.crawling.janela_publicacao import (
     JanelaPublicacao,
     carregar_urls_conhecidas,
+    dominio_de,
     extrair_data_publicacao,
 )
 from observatorio_vagas.crawling.paginacao import descobrir_paginacao, eh_link_listagem
@@ -99,6 +100,11 @@ SITEMAPS_SEM_VAGAS_PARA_ENCERRAR = 3
 # o corte por idade chegar tarde: na rodada de 05/10/2026, ~28% das páginas foram
 # baixadas depois de a fonte já ter sido encerrada.
 LOTE_DETALHES = 8
+# Respostas 403/429 seguidas de um mesmo domínio que fazem o robô desistir dele
+# nesta coleta (na rodada de 05/10/2026, 100% dos detalhes da BNE vieram 403 e
+# seguraram o último bloco por 4 minutos).
+BLOQUEIOS_SEGUIDOS_PARA_PARAR = 10
+STATUS_DE_BLOQUEIO = frozenset({403, 429})
 
 
 class CatalogoFontesSpider(Spider):
@@ -266,6 +272,8 @@ class CatalogoFontesSpider(Spider):
         self.detalhes_novos: Counter[str] = Counter()
         self.detalhes_ja_gravados: Counter[str] = Counter()
         self.detalhes_em_voo: Counter[str] = Counter()
+        self.bloqueios_seguidos: Counter[str] = Counter()
+        self.dominios_bloqueados: set[str] = set()
 
         # O OffsiteMiddleware do Scrapy também bloqueará
         # domínios que não aparecem nesta lista.
@@ -499,6 +507,7 @@ class CatalogoFontesSpider(Spider):
         fonte: str,
     ) -> Iterator[RespostaBruta | Request]:
         self.paginas_recebidas[alvo_id] += 1
+        self._contar_bloqueio(response)
         self.resultados_download.setdefault(alvo_id, {})[response.request.url] = {
             "url_final": response.url,
             "status_http": response.status,
@@ -873,6 +882,29 @@ class CatalogoFontesSpider(Spider):
 
         # Entrega as requisições aprovadas ao Scrapy.
         yield from requisicoes
+
+    def _contar_bloqueio(self, response: Response) -> None:
+        """403/429 seguidos de um domínio: para de pedir a ele nesta coleta."""
+
+        dominio = dominio_de(response.url)
+        if not dominio:
+            return
+        if response.status in STATUS_DE_BLOQUEIO:
+            self.bloqueios_seguidos[dominio] += 1
+            if (
+                self.bloqueios_seguidos[dominio] >= BLOQUEIOS_SEGUIDOS_PARA_PARAR
+                and dominio not in self.dominios_bloqueados
+            ):
+                self.dominios_bloqueados.add(dominio)
+                self.logger.warning(
+                    "Domínio parou de responder ao robô (%s respostas %s seguidas): %s; "
+                    "nada mais será pedido a ele nesta coleta",
+                    self.bloqueios_seguidos[dominio],
+                    response.status,
+                    dominio,
+                )
+        elif 200 <= response.status < 300:
+            self.bloqueios_seguidos[dominio] = 0
 
     def _vagas_de_detalhe(self, alvo_id: str) -> int:
         return max(0, LOTE_DETALHES - self.detalhes_em_voo[alvo_id])

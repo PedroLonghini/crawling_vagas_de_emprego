@@ -5,7 +5,9 @@ from pathlib import Path
 
 from observatorio_vagas.extraction.leitura.camadas import InventarioPagina, montar_inventario
 from observatorio_vagas.extraction.leitura.interpretacao import (
+    bloco_da_vaga,
     ler_vaga,
+    limpar_descricao,
     limpar_texto,
     validar_apply_url,
     validar_endereco,
@@ -472,3 +474,29 @@ def test_site_da_propria_empresa_mantem_o_nome_igual_ao_dominio():
     assert (
         _ler_empresa("https://www.tilibra.com.br/trabalhe-conosco/1", site="Tilibra") == "Tilibra"
     )
+
+
+def test_cidade_com_uf_entre_parenteses_no_json_ld():
+    vaga = {
+        "@type": "JobPosting",
+        "title": "Motorista Logístico",
+        "jobLocation": {
+            "address": {"addressLocality": "São Paulo (SP)", "addressRegion": "Sudeste"}
+        },
+    }
+
+    assert _ler_local(vaga) == "São Paulo, SP"
+
+
+def test_lista_lateral_de_vagas_abertas_encerra_o_bloco_da_vaga():
+    corpo = (
+        "Vaga: Estoquista De Loja em Tubarão\nCód. 3910\n"
+        + "Atividades: receber, conferir e organizar mercadorias no estoque da loja. " * 3
+        + "\nRequisitos&nbsp;Experiência com rotinas de estoque.\n"
+        + "Vagas Abertas\nVendedor\nAdministrativo De Loja (estágio)\nMotorista de Carreta\n"
+    )
+
+    bloco = bloco_da_vaga(corpo, "Vaga: Estoquista De Loja em Tubarão")
+
+    assert bloco and "Motorista de Carreta" not in bloco and "(estágio)" not in bloco
+    assert "Requisitos Experiência" in limpar_descricao(bloco)

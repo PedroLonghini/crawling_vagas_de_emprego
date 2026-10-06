@@ -169,6 +169,30 @@ def nome_de_portal(nome: str, tipos: set[str] | frozenset[str] = frozenset()) ->
     return bool(NOME_DE_PORTAL_FRACO.search(nome)) and bool(set(tipos) & TIPOS_EDITORIAIS)
 
 
+DATAS_QUE_INDICAM_LISTA_DE_MATERIAS = 5
+_REQUISITOS = re.compile(r"requisit|qualifica[cç][oõ]es|pr[eé]-requisit")
+_COMO_SE_CANDIDATAR = re.compile(
+    r"candidat|curr[ií]culo|inscri[cç]|inscreva|envie|enviar|interessados devem enviar"
+)
+
+
+def _tem_tipo_em_qualquer_lugar(seletor: Selector, tipo: str) -> bool:
+    """Algum JSON-LD declara ``tipo`` em qualquer nível (ex.: publisher do jornal)."""
+
+    def visitar(valor: Any) -> bool:
+        if isinstance(valor, list):
+            return any(visitar(item) for item in valor)
+        if not isinstance(valor, dict):
+            return False
+        declarado = valor.get("@type")
+        for item in declarado if isinstance(declarado, list) else [declarado]:
+            if isinstance(item, str) and _tipo_normalizado(item) == tipo:
+                return True
+        return any(visitar(filho) for filho in valor.values())
+
+    return visitar(_blocos_json_ld(seletor))
+
+
 def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
     """A própria página se declara outra coisa (loja, evento, lista, notícia sem vaga)."""
 
@@ -188,9 +212,23 @@ def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
     # og:type=article sozinho não conta: o WordPress marca TODA página assim (as 92
     # vagas da Comdarpe têm og:type=article). Só o JSON-LD de notícia/post conta, e
     # ainda assim a vaga vale se o título ou o endereço falarem de vaga.
-    if not tipos & TIPOS_EDITORIAIS:
+    if tipos & TIPOS_EDITORIAIS:
+        return not fala_de_vaga
+    # Matéria sem JSON-LD de notícia (auditoria de 06/10/2026): autor e data marcados
+    # na página (turismoemfoco, "Azul anuncia contratação de 446 pilotos") ou site de
+    # jornal (Folha, NewsMediaOrganization). Lista de matérias nunca é vaga; matéria
+    # só vale se falar de vaga E tiver cara de vaga: requisitos e como se candidatar.
+    datas = len(seletor.css('[itemprop="datePublished"]'))
+    materia = (
+        bool(seletor.css('[itemprop="author"]')) and datas > 0
+    ) or _tem_tipo_em_qualquer_lugar(seletor, "newsmediaorganization")
+    if not materia:
         return False
-    return not fala_de_vaga
+    if datas >= DATAS_QUE_INDICAM_LISTA_DE_MATERIAS:
+        return True
+    texto = " ".join(seletor.xpath("string(//body)").get("").split()).casefold()
+    tem_cara_de_vaga = bool(_REQUISITOS.search(texto) and _COMO_SE_CANDIDATAR.search(texto))
+    return not (fala_de_vaga and tem_cara_de_vaga)
 
 
 # Rótulos explícitos podem aparecer em parágrafos vizinhos. O seletor HTML

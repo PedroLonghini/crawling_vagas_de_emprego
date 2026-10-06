@@ -226,7 +226,12 @@ def test_cidade_no_titulo() -> None:
     # "para" + UF é cargo, não cidade; nomes ambíguos sem UF ficam de fora.
     assert cidade("Vaga para Cuidador de Idoso, SP") is None
     assert cidade("Vendedor para Campinas - SP") == "Campinas, SP"
-    assert cidade("Vaga em São José") is None
+    # Nome exato único no IBGE (São José-SC) vale; nome repetido ("Bom Jesus") não.
+    assert cidade("Vaga em São José") == "São José, SC"
+    assert cidade("Vaga em Bom Jesus") is None
+    assert cidade("Estoquista de Loja em Tubarão") == "Tubarão, SC"
+    assert cidade("Técnico em Saúde") is None
+    assert cidade("Vendedor em Mato Grosso") is None  # é o estado, não Mato Grosso-PB
 
 
 def test_uf_da_cidade_pela_lista_do_ibge() -> None:
@@ -241,3 +246,7 @@ def test_uf_da_cidade_pela_lista_do_ibge() -> None:
 def test_uf_colada_e_rotulo_de_tres_palavras() -> None:
     assert _local("Local: São Paulo, SPFormação: superior") == "São Paulo, SP"
     assert _local("Cidade: São José do Rio Preto Turno da noite: sim") == "São José do Rio Preto"
+
+
+def test_cidade_com_uf_entre_parenteses() -> None:
+    assert _local("Local: São Paulo (SP)") == "São Paulo, SP"

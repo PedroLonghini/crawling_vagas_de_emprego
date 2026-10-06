@@ -1,7 +1,6 @@
 """Testes da integração entre descoberta, fábrica e spider."""
 
 import asyncio
-import json
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock
@@ -547,10 +546,10 @@ def test_limite_um_preserva_somente_pagina_inicial(
     )
 
 
-def test_spider_gupy_descobre_next_data_sem_ancoras(
+def test_spider_ignora_fonte_gupy_bloqueada(
     tmp_path: Path,
 ) -> None:
-    """O spider seleciona o adaptador pela fonte informada no catálogo."""
+    """A Gupy foi bloqueada em 06/10/2026: a linha do catálogo nem vira requisição."""
 
     catalogo = tmp_path / "fontes_gupy.csv"
     catalogo.write_text(
@@ -564,37 +563,8 @@ def test_spider_gupy_descobre_next_data_sem_ancoras(
         encoding="utf-8",
     )
     spider = CatalogoFontesSpider(catalogo=str(catalogo))
-    requisicao = asyncio.run(coletar_requisicoes_iniciais(spider))[0]
-    dados = {
-        "props": {
-            "pageProps": {
-                "jobs": [
-                    {"id": 10, "title": "Vaga Dez"},
-                    {"id": 20, "title": "Vaga Vinte"},
-                ]
-            }
-        }
-    }
-    corpo = (
-        f'<script id="__NEXT_DATA__" type="application/json">{json.dumps(dados)}</script>'
-    ).encode()
-    resposta = criar_resposta(
-        requisicao,
-        corpo=corpo,
-    )
 
-    resultados = list(
-        spider.parse(
-            resposta,
-            **requisicao.cb_kwargs,
-        )
-    )
-    detalhes = [resultado for resultado in resultados if isinstance(resultado, Request)]
-
-    assert [detalhe.url for detalhe in detalhes] == [
-        "https://empresa.gupy.io/jobs/10",
-        "https://empresa.gupy.io/jobs/20",
-    ]
+    assert asyncio.run(coletar_requisicoes_iniciais(spider)) == []
 
 
 def test_cada_detalhe_concluido_libera_o_proximo_do_lote(tmp_path: Path) -> None:

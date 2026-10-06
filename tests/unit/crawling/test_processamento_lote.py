@@ -214,7 +214,9 @@ def test_lote_ignora_linha_invalida_e_alvo_sem_anuncios(
     catalogo = _escrever_catalogo(
         tmp_path,
         "quebrada,Empresa Ruim,outra,url-invalida,true,10,somente_coleta",
-        ("valida,Empresa Válida,gupy,https://valida.gupy.io/,true,10,somente_coleta"),
+        (
+            "valida,Empresa Válida,pagina_carreiras,https://valida.example/vagas,true,10,somente_coleta"
+        ),
     )
 
     monkeypatch.setattr(
@@ -250,7 +252,9 @@ def test_lote_isola_dominio_proibido_e_processa_alvo_seguinte(
     catalogo = _escrever_catalogo(
         tmp_path,
         "indeed,Indeed,outra,https://br.indeed.com/jobs,true,10,somente_coleta",
-        ("valida,Empresa Válida,gupy,https://valida.gupy.io/,true,10,somente_coleta"),
+        (
+            "valida,Empresa Válida,pagina_carreiras,https://valida.example/vagas,true,10,somente_coleta"
+        ),
     )
     processados: list[str] = []
 

@@ -410,7 +410,9 @@ _FIM_DO_BLOCO = re.compile(
     r"^(candidat|inscreva|compartilh|share|vagas? (relacionad|semelhant|similar|recentes)|"
     r"outras vagas|veja tamb|leia tamb|newsletter|politica de privacidade|"
     r"todos os direitos|copyright|©|outras pessoas tambem|voce tambem pode|quem viu esta|"
-    r"mais vagas|vagas em destaque|cadastre-se para|ocorreu um erro)"
+    r"mais vagas|vagas em destaque|cadastre-se para|ocorreu um erro|"
+    # Lista lateral de outras vagas (Drugovich: "Vagas Abertas" com ~60 títulos).
+    r"vagas abertas|outras oportunidades|vagas dispon[ií]veis|todas as vagas)"
 )
 _RESUMO = re.compile(r"(\.\.\.|…)\s*$|\b(saiba|leia|ver|veja) mais\W*$", re.IGNORECASE)
 TAMANHO_MAXIMO_RESUMO = 300
@@ -507,6 +509,10 @@ def bloco_da_vaga(texto_corpo: str, titulo: str) -> str | None:
 def limpar_descricao(texto: str) -> str:
     """Remove linhas que são só texto de interface (cookies, ✕, destaque...)."""
 
+    # Entidade que sobrou no texto por codificação dupla no site ("Requisitos&nbsp;Exp…",
+    # Drugovich) vira o caractere; o espaço rígido vira quebra de linha de seção.
+    if "&" in texto:
+        texto = html_mod.unescape(texto).replace("\xa0", " ")
     linhas = []
     for linha in texto.split("\n"):
         if LIXO_INTERFACE.match(normalizar(linha.strip())):
@@ -514,6 +520,11 @@ def limpar_descricao(texto: str) -> str:
         linhas.append(linha)
     return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
 
+
+_CIDADE_UF_PARENTESES = re.compile(
+    r"(?P<cidade>[^()]{2,60}?)\s*\((?P<uf>AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|"
+    r"RJ|RN|RS|RO|RR|SC|SP|SE|TO)\)"
+)
 
 # Consultoria de RH que esconde o cliente: a vaga sai como "confidential" (combinado
 # com o usuário em 05/10/2026). Host -> marca, para recusar a consultoria como empresa.
@@ -1063,6 +1074,9 @@ def ler_vaga(
         ],
         validar=lambda v: validar_endereco(limpar_texto(str(v)) or ""),
     )
+    # "São Paulo (SP)" (Jobijoba) -> "São Paulo, SP".
+    if endereco and (uf_entre_parenteses := _CIDADE_UF_PARENTESES.fullmatch(str(endereco).strip())):
+        endereco = f"{uf_entre_parenteses['cidade'].strip()}, {uf_entre_parenteses['uf']}"
     if endereco and not re.search(r",\s*[A-Z]{2}$", str(endereco)):
         # Só a cidade ("Recife"): completa com a UF se o texto ou o título a trazem.
         for leitura in (

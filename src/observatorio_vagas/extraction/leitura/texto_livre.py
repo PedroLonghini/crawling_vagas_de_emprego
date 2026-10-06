@@ -19,6 +19,8 @@ from decimal import Decimal, InvalidOperation
 from functools import lru_cache
 from pathlib import Path
 
+from observatorio_vagas.domain.localizacao import NOMES_UFS_BRASIL
+
 
 def normalizar(texto: str) -> str:
     """Minúsculas e sem acentos, para comparar palavras."""
@@ -272,10 +274,10 @@ _UFS = "AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|RJ|RN|RS|RO|RR|SC|
 _PALAVRA_CIDADE = r"[A-ZÀ-Ý][\wÀ-ÿ'.]*"
 _NOME_CIDADE = rf"{_PALAVRA_CIDADE}(?:\s+(?:(?:d[aeo]s?|e)\s+)?{_PALAVRA_CIDADE}){{0,3}}"
 _CIDADE_UF = re.compile(
-    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*(?:[-–/,]|\s)\s*(?P<uf>{_UFS})(?![\wÀ-ÿ])"
+    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*(?:[-–/,(]|\s)\s*(?P<uf>{_UFS})\)?(?![\wÀ-ÿ])"
 )
 _CIDADE_UF_COM_SEPARADOR = re.compile(
-    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*[-–/,]\s*(?P<uf>{_UFS})(?![\wÀ-ÿ])"
+    rf"(?<![\wÀ-ÿ])(?P<cidade>{_NOME_CIDADE})\s*[-–/,(]\s*(?P<uf>{_UFS})\)?(?![\wÀ-ÿ])"
 )
 _ROTULO_LOCAL = re.compile(
     r"^\s*(?:local(?:iza[cç][aã]o)?(?:\s+(?:de\s+trabalho|da\s+vaga|de\s+atua[cç][aã]o))?|"
@@ -348,6 +350,13 @@ def uf_da_cidade(cidade: str) -> str | None:
     return next(iter(siglas)) if len(siglas) == 1 else None
 
 
+# Municípios de nome único que também são palavras comuns em título de vaga
+# ("Técnico em Saúde", "Agente em União"): depois de "em" não viram cidade.
+MUNICIPIOS_QUE_SAO_PALAVRAS_COMUNS = frozenset(
+    {"saude", "uniao", "progresso", "liberdade", "esperanca", "harmonia", "paraiso",
+     "alianca", "futuro", "independencia", "concordia", "sucesso", "ouro", "planalto",
+     "central", "porto", "areia", "campo", "colina", "mirante", "pedra", "cristal"}
+)  # fmt: skip
 _CIDADE_NO_TITULO = re.compile(
     rf"\b(?:em|para)\s+(?P<cidade>{_NOME_CIDADE})(?:\s*[-–/,]\s*(?P<uf>{_UFS}))?"
     rf"\s*(?:[|\-–(]|$)"
@@ -357,13 +366,22 @@ _CIDADE_NO_TITULO = re.compile(
 def cidade_do_titulo(titulo: str, origem: str) -> Leitura | None:
     """ "Vendedor em Recife" ou "Analista em Campinas - SP": cidade no título.
 
-    Sem UF, só aceita capitais e cidades grandes (evita "Analista em Tecnologia"). Com
-    UF, "para" só vale com cidade conhecida ("Vaga para Cuidador de Idoso, SP" é cargo).
+    Sem UF, aceita capitais e cidades grandes e, depois de "em", qualquer município de
+    nome único no IBGE ("Estoquista em Tubarão" -> Tubarão, SC); "Analista em
+    Tecnologia" continua de fora. Com UF, "para" só vale com cidade conhecida ("Vaga
+    para Cuidador de Idoso, SP" é cargo).
     """
 
     for achado in _CIDADE_NO_TITULO.finditer(titulo or ""):
         cidade = _limpar_cidade(achado["cidade"])
-        conhecida = normalizar(cidade) in CIDADES_CONHECIDAS
+        nome = normalizar(cidade)
+        conhecida = nome in CIDADES_CONHECIDAS or (
+            achado.group().lstrip().startswith("em")
+            and nome not in MUNICIPIOS_QUE_SAO_PALAVRAS_COMUNS
+            # "em Mato Grosso" é o estado, não o município Mato Grosso-PB.
+            and nome not in NOMES_UFS_BRASIL
+            and uf_da_cidade(cidade) is not None
+        )
         if achado["uf"] and (conhecida or achado.group().lstrip().startswith("em")):
             return Leitura(f"{cidade}, {achado['uf']}", origem, achado.group().strip())
         if conhecida:

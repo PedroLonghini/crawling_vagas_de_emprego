@@ -50,7 +50,7 @@ def test_carrega_multiplos_alvos(
 
     caminho = criar_catalogo(
         tmp_path,
-        ("empresa_gupy,Empresa Gupy,gupy,https://empresa.gupy.io,true,10"),
+        ("empresa_ativa,Empresa Ativa,pagina_carreiras,https://ativa.example/vagas,true,10"),
         (
             "empresa_carreiras,Empresa Carreiras,pagina_carreiras,"
             "https://empresa.example/carreiras,false,5"
@@ -61,12 +61,12 @@ def test_carrega_multiplos_alvos(
 
     assert len(alvos) == 2
 
-    # Primeiro alvo: fonte ativa da Gupy.
-    assert alvos[0].alvo_id == "empresa_gupy"
-    assert alvos[0].fonte is Fonte.GUPY
+    # Primeiro alvo: fonte ativa (a Gupy foi bloqueada em 06/10/2026).
+    assert alvos[0].alvo_id == "empresa_ativa"
+    assert alvos[0].fonte is Fonte.PAGINA_CARREIRAS
     assert alvos[0].ativa is True
     assert alvos[0].limite_paginas == 10
-    assert alvos[0].dominio == "empresa.gupy.io"
+    assert alvos[0].dominio == "ativa.example"
 
     # Segundo alvo: página de carreiras desativada.
     assert alvos[1].alvo_id == "empresa_carreiras"
@@ -187,7 +187,7 @@ def test_modo_tolerante_preserva_linhas_validas(
     caminho = criar_catalogo(
         tmp_path,
         "invalida,Empresa,outra,url-sem-protocolo,true,10",
-        "valida,Empresa Válida,gupy,https://valida.gupy.io,true,20",
+        "valida,Empresa Válida,pagina_carreiras,https://valida.example/vagas,true,20",
         "outra,Outra Empresa,outra,https://outra.example,true,5",
     )
 

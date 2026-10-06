@@ -433,3 +433,48 @@ def test_pagina_de_noticia_nao_herda_o_nome_do_site() -> None:
 
     # A vaga passa (o endereço tem /vagas/), mas a empresa não é o jornal.
     assert _empresa("Hora Brasil", noticia, empresa_nome="Hora Brasil") is None
+
+
+def _materia(titulo: str, corpo: str, extra: str = "") -> list:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f"<html><head><title>{titulo}</title>{extra}</head><body><h1>{titulo}</h1>"
+        '<span itemprop="author">Por Fábio Cardoso</span>'
+        '<time itemprop="datePublished">10/08/2026</time>'
+        f'<div class="job-description">{corpo}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(
+        html.encode(), url="https://turismo.example/v1/2026/07/21/materia/", empresa_nome="X"
+    ).vagas
+
+
+def test_materia_com_autor_e_data_so_vale_com_cara_de_vaga() -> None:
+    noticia = "A Azul amplia o plano de contratação de pilotos. Requisitos: licença. " * 4
+    assert not _materia("Azul anuncia contratação de 446 novos pilotos", noticia)
+
+    vaga = noticia + " Interessados devem enviar currículo para rh@empresa.example."
+    assert _materia("Empresa contrata auxiliar de cozinha", vaga)
+
+
+def test_lista_de_materias_de_jornal_nao_vira_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    itens = "".join(
+        f'<article><time itemprop="datePublished">{d}/09/2026</time>'
+        f"<h2>Entrevista {d}</h2></article>"
+        for d in range(1, 8)
+    )
+    publisher = (
+        '<script type="application/ld+json">{"@type": "WebPage", "publisher": '
+        '{"@type": "NewsMediaOrganization", "name": "Jornal"}}</script>'
+    )
+    html = (
+        f"<html><head><title>Entrevista da Segunda</title>{publisher}</head><body>"
+        f"<h1>Entrevista da Segunda</h1>{itens}"
+        f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+    )
+
+    assert not extrair_job_posting_html_generico(
+        html.encode(), url="https://jornal.example/especial/entrevista/", empresa_nome="X"
+    ).vagas

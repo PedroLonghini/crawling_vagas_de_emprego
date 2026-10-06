@@ -147,6 +147,13 @@ RESTRICOES_DOMINIOS_COLETA = (
         referencia="https://empregandobrasil.com.br",
     ),
     RestricaoDominioColeta(
+        dominio_raiz="gupy.io",
+        codigo="dominio_gupy",
+        nome="Gupy",
+        motivo="fonte não autorizada (decisão do usuário em 06/10/2026)",
+        referencia="https://www.gupy.io",
+    ),
+    RestricaoDominioColeta(
         dominio_raiz="nic.br",
         codigo="dominio_nic_br",
         nome="NIC.br",

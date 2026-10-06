@@ -16,6 +16,7 @@ from observatorio_vagas.domain.enums import (
 from observatorio_vagas.domain.localizacao import localizacao_eh_brasileira
 from observatorio_vagas.domain.politica_fonte import (
     PoliticaFonte,
+    encontrar_restricao_dominio,
 )
 from observatorio_vagas.domain.prontidao import (
     RelatorioProntidao,
@@ -220,6 +221,19 @@ def avaliar_elegibilidade_publicacao(
             )
         )
 
+    # Domínio na lista de restrições (fonte não autorizada): nem anúncio antigo,
+    # gravado antes da restrição, pode ser publicado.
+    restricao = encontrar_restricao_dominio(
+        (urlsplit(str(anuncio.url)).hostname or "").removeprefix("www.")
+    )
+    if restricao is not None:
+        bloqueios.append(
+            BloqueioPublicacao(
+                codigo=(CodigoBloqueioPublicacao.FONTE_SEM_PERMISSAO),
+                mensagem=f"Fonte não autorizada ({restricao.nome}): {restricao.motivo}.",
+            )
+        )
+
     # Uma fonte pode permitir coleta para análise,
     # mas proibir republicação.
     if not politica_fonte.permite_publicacao:
@@ -262,9 +276,7 @@ def avaliar_elegibilidade_publicacao(
             BloqueioPublicacao(
                 codigo=(CodigoBloqueioPublicacao.LOCALIZACAO_FORA_DO_BRASIL),
                 campo="location.address",
-                mensagem=(
-                    "A vaga está localizada fora do Brasil e não pode ser publicada."
-                ),
+                mensagem=("A vaga está localizada fora do Brasil e não pode ser publicada."),
             )
         )
 

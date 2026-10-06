@@ -59,7 +59,8 @@ DOMINIOS_FORA_DO_BRASIL = ("emploive.com", "drjobpro.com", "disneycareers.com")
 # Agregadores que a coleta lê inteiros a partir de qualquer entrada: com 63 entradas
 # do empregandobrasil, 5 leram ~10 mil anúncios cada, quase sempre os mesmos. Basta uma.
 # (jobijoba, BNE e trabalhabrasil NÃO entram: cada entrada traz vagas diferentes.)
-DOMINIOS_LIDOS_INTEIROS = ("empregandobrasil.com.br",)
+# O empregandobrasil saiu: em 06/10/2026 foi bloqueado como fonte não autorizada.
+DOMINIOS_LIDOS_INTEIROS: tuple[str, ...] = ()
 MOTIVO_ENTRADA_REPETIDA = "entrada repetida de agregador lido inteiro (fica uma só)"
 # Página que descreve uma ocupação (salário médio, atribuições), sem vaga.
 _DESCRICAO_DE_CARGO = re.compile(r"^(www\.)?cargos\.com\.br/cargo/", re.IGNORECASE)

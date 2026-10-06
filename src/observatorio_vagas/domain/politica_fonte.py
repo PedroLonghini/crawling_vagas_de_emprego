@@ -140,6 +140,13 @@ RESTRICOES_DOMINIOS_COLETA = (
         referencia="https://www.vagas.com.br/candidatos/termos-de-uso",
     ),
     RestricaoDominioColeta(
+        dominio_raiz="empregandobrasil.com.br",
+        codigo="dominio_empregandobrasil",
+        nome="Empregando Brasil",
+        motivo="fonte não autorizada (decisão do usuário em 06/10/2026)",
+        referencia="https://empregandobrasil.com.br",
+    ),
+    RestricaoDominioColeta(
         dominio_raiz="nic.br",
         codigo="dominio_nic_br",
         nome="NIC.br",
@@ -251,9 +258,7 @@ class PoliticaFonte:
             raise ValueError("republicacao_permitida=true exige status_politica=aprovada")
 
         possui_licenca_aberta = bool(licenca_nome and licenca_url)
-        possui_autorizacao_privada = bool(
-            self.autorizacao_escrita and referencia_autorizacao
-        )
+        possui_autorizacao_privada = bool(self.autorizacao_escrita and referencia_autorizacao)
 
         if self.autorizacao_escrita and self.status is not StatusPoliticaFonte.APROVADA:
             raise ValueError("autorizacao_escrita=true exige status_politica=aprovada")
@@ -326,10 +331,7 @@ class PoliticaFonte:
             self.status is StatusPoliticaFonte.APROVADA
             and self.republicacao_permitida
             and (
-                (
-                    licenca_permite_republicacao(self.licenca_nome)
-                    and bool(self.licenca_url)
-                )
+                (licenca_permite_republicacao(self.licenca_nome) and bool(self.licenca_url))
                 or (self.autorizacao_escrita and bool(self.referencia_autorizacao))
             )
         )
@@ -347,7 +349,5 @@ class PoliticaFonte:
 
         permissao = self.licenca_nome or "Autorização escrita confirmada"
         return (
-            f"Fonte: {self.nome_atribuicao}. "
-            f"Licença/permissão: {permissao}. "
-            f"Origem: {url_origem}"
+            f"Fonte: {self.nome_atribuicao}. Licença/permissão: {permissao}. Origem: {url_origem}"
         )

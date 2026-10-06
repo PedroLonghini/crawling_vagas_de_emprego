@@ -123,14 +123,17 @@ def test_agregador_lido_inteiro_fica_com_a_entrada_que_mais_rendeu(
     catalogo = tmp_path / "origem" / "catalogo_fontes.csv"
     catalogo.parent.mkdir()
     catalogo.write_text(
-        "url\nhttps://empregandobrasil.com.br/vagas/analista-a/\n"
-        "https://empregandobrasil.com.br/vagas/analista-b/\n"
+        "url\nhttps://agregador.example.com.br/vagas/analista-a/\n"
+        "https://agregador.example.com.br/vagas/analista-b/\n"
         "https://www.jobijoba.com.br/detail/97/aaa\nhttps://www.jobijoba.com.br/detail/97/bbb\n",
         encoding="utf-8",
     )
     alvos = triar_catalogo.carregar_alvos_csv_tolerante(catalogo).alvos
     rendimento = {a.alvo_id: (9990 if a.url_inicial.endswith("analista-b/") else 19) for a in alvos}
     monkeypatch.setattr(triar_catalogo, "_alvos_com_anuncio", lambda: rendimento)
+    from observatorio_vagas.crawling import triagem_fontes
+
+    monkeypatch.setattr(triagem_fontes, "DOMINIOS_LIDOS_INTEIROS", ("agregador.example.com.br",))
 
     triar_catalogo.triar(catalogo, tmp_path / "saida", com_mongo=True)
 

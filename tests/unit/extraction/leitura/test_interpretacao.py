@@ -445,3 +445,30 @@ def test_empresa_em_microdata_da_pagina():
     )
 
     assert _ler_empresa("https://jobs.smartrecruiters.com/RedBull/1", corpo=corpo) == "Red Bull"
+
+
+def test_nome_do_proprio_agregador_nao_vira_empresa():
+    from observatorio_vagas.extraction.agregadores import nome_e_do_site
+
+    assert nome_e_do_site("Jobbrazil", "https://www.jobbrazil.com/vaga/1")
+    assert nome_e_do_site("Trabalha Brasil", "https://www.trabalhabrasil.com.br/vaga/1")
+    assert nome_e_do_site("eu.dev.br", "https://eu.dev.br/vagas/x")
+    assert not nome_e_do_site("Hitss Brasil", "https://www.jobbrazil.com/vaga/1")
+
+    # Agregador sem a empresa na página: nome do site recusado, empresa oculta.
+    vaga_portal = {"@type": "JobPosting", "hiringOrganization": {"name": "Jobbrazil"}}
+    assert _ler_empresa("https://www.jobbrazil.com/vaga/1", vaga_portal) == "confidential"
+    assert _ler_empresa("https://eu.dev.br/vagas/x", site="eu.dev.br") == "confidential"
+    # Quando o agregador diz quem contrata, vale a empresa.
+    vaga_real = {"@type": "JobPosting", "hiringOrganization": {"name": "Hitss Brasil"}}
+    assert _ler_empresa("https://www.jobbrazil.com/vaga/1", vaga_real) == "Hitss Brasil"
+    corpo = "<p>Empresa: Transportes Silva</p><p>Motorista de caminhão.</p>"
+    assert _ler_empresa("https://www.trabalhabrasil.com.br/vaga/1", corpo=corpo) == (
+        "Transportes Silva"
+    )
+
+
+def test_site_da_propria_empresa_mantem_o_nome_igual_ao_dominio():
+    assert (
+        _ler_empresa("https://www.tilibra.com.br/trabalhe-conosco/1", site="Tilibra") == "Tilibra"
+    )

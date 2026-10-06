@@ -224,10 +224,21 @@ def anuncio_e_inutil(anuncio: AnuncioVaga) -> bool:
 
     organizacao = _primeiro_objeto(anuncio.campos_estruturados.get("hiringOrganization"))
     nome_organizacao = _texto(organizacao.get("name")) if organizacao is not None else None
-    if anuncio.empresa_original or nome_organizacao:
+    if (
+        anuncio.empresa_original
+        or nome_organizacao
+        or _nome_da_leitura(anuncio.campos_estruturados)
+    ):
         return False
 
     return len((anuncio.descricao_original or "").strip()) < DESCRICAO_UTIL_MINIMA
+
+
+def _nome_da_leitura(documento: dict) -> str | None:
+    leitura = documento.get("_leitura")
+    campos = leitura.get("campos") if isinstance(leitura, dict) else None
+    empresa = campos.get("company") if isinstance(campos, dict) else None
+    return _texto(empresa.get("name")) if isinstance(empresa, dict) else None
 
 
 def extrair_empresa_do_anuncio(
@@ -240,7 +251,13 @@ def extrair_empresa_do_anuncio(
     organizacao = _primeiro_objeto(documento.get("hiringOrganization"))
     nome_organizacao = _texto(organizacao.get("name")) if organizacao is not None else None
 
-    nome = anuncio.empresa_original or nome_organizacao
+    # A leitura completa decide o nome (ela recusa, por exemplo, o nome do agregador
+    # "Jobbrazil" e cai em "confidential"). Quando ela discorda do documento, o site e o
+    # logo do documento são do portal, não da empresa, e ficam de fora.
+    nome_lido = _nome_da_leitura(documento)
+    if nome_lido and nome_organizacao and nome_lido.casefold() != nome_organizacao.casefold():
+        organizacao = None
+    nome = nome_lido or anuncio.empresa_original or nome_organizacao
 
     if nome is None:
         raise ErroResolucaoEmpresa(

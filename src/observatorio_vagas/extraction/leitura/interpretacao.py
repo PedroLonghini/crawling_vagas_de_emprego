@@ -16,6 +16,11 @@ from decimal import Decimal
 from typing import Any
 from urllib.parse import parse_qs, urljoin, urlsplit
 
+from observatorio_vagas.extraction.agregadores import (
+    e_agregador,
+    e_site_de_terceiros,
+    nome_e_do_site,
+)
 from observatorio_vagas.extraction.leitura.camadas import (
     LIXO_INTERFACE,
     InventarioPagina,
@@ -771,6 +776,8 @@ def ler_vaga(
     eh_plataforma = plataforma is not None or any(
         (urlsplit(url_vaga).hostname or "").endswith(h) for h in HOSTS_PLATAFORMA
     )
+    agregador = e_agregador(url_vaga)
+    site_de_terceiros = agregador or eh_plataforma or e_site_de_terceiros(url_vaga)
     diag = _Diagnostico(inv.camadas())
     p: dict[str, Candidato] = {}
     sobras: list[dict[str, Any]] = []
@@ -877,17 +884,32 @@ def ler_vaga(
                     NOME_CONFIDENCIAL if _EMPRESA_CONFIDENCIAL.search(texto_vaga or "") else None
                 ),
             ),
-            ("meta.og:site_name", lambda: None if eh_plataforma else inv.meta.get("og:site_name")),
+            (
+                "cabecalho.rotulo_empresa",
+                lambda: (
+                    (r := inv.rotulo(r"^empresa$", r"^empresa contratante", r"^contratante$"))
+                    and r[1]
+                ),
+            ),
+            (
+                "meta.og:site_name",
+                # Em agregador, o nome do site nunca é a empresa que contrata.
+                lambda: None if eh_plataforma or agregador else inv.meta.get("og:site_name"),
+            ),
             (
                 "consultoria.cliente_oculto",
                 lambda: NOME_CONFIDENCIAL if consultoria_de_rh(url_vaga) else None,
             ),
+            # Agregador que não diz quem contrata: a empresa fica oculta.
+            ("agregador.cliente_oculto", lambda: NOME_CONFIDENCIAL if agregador else None),
         ],
         validar=lambda v: (
             "nome de conta/página de carreiras"
             if re.search(r"^(nova pagina|abler|demo\d*|teste)$", normalizar(str(v)).strip())
             else "nome da consultoria, não do cliente"
             if (marca := consultoria_de_rh(url_vaga)) and marca in normalizar(str(v))
+            else "nome do próprio site (agregador/plataforma), não da empresa"
+            if site_de_terceiros and nome_e_do_site(str(v), url_vaga)
             else None
         ),
     )

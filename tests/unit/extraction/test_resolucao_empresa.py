@@ -412,3 +412,22 @@ def test_anuncio_com_empresa_ou_com_descricao_longa_nao_e_inutil() -> None:
     assert not anuncio_e_inutil(com_empresa)
     assert not anuncio_e_inutil(sem_empresa_com_descricao)
     assert not anuncio_e_inutil(so_na_organizacao)
+
+
+def test_nome_da_leitura_vale_e_site_do_portal_fica_de_fora() -> None:
+    """A leitura recusou o nome do agregador: a empresa sai como 'confidential'."""
+
+    anuncio = criar_anuncio(nome_empresa="Jobbrazil")
+    anuncio = anuncio.model_copy(
+        update={
+            "campos_estruturados": {
+                **anuncio.campos_estruturados,
+                "_leitura": {"campos": {"company": {"name": "confidential"}}},
+            }
+        }
+    )
+
+    empresa = extrair_empresa_do_anuncio(anuncio)
+
+    assert empresa.nome_fantasia == "confidential"
+    assert empresa.dominio is None and empresa.logo_url is None

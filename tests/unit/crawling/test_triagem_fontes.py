@@ -101,7 +101,7 @@ def test_com_mongo_tira_noticia_que_nunca_rendeu_vaga(tmp_path: Path, monkeypatc
         encoding="utf-8",
     )
     alvos = triar_catalogo.carregar_alvos_csv_tolerante(catalogo).alvos
-    com_anuncio = {a.alvo_id for a in alvos if "outro.example" in a.url_inicial}
+    com_anuncio = {a.alvo_id: 1 for a in alvos if "outro.example" in a.url_inicial}
     monkeypatch.setattr(triar_catalogo, "_alvos_com_anuncio", lambda: com_anuncio)
 
     resumo = triar_catalogo.triar(catalogo, tmp_path / "saida", com_mongo=True)
@@ -110,3 +110,31 @@ def test_com_mongo_tira_noticia_que_nunca_rendeu_vaga(tmp_path: Path, monkeypatc
     assert "feira-do-livro" in excluidas and "nunca rendeu vaga" in excluidas
     # Carreira sem anúncio, notícia que já rendeu vaga e notícia que fala de seleção ficam.
     assert resumo["fontes_mantidas"] == 3
+
+
+def test_site_do_exterior_sai_do_catalogo() -> None:
+    assert "exterior" in (motivo_de_exclusao("https://emploive.com/jobs/3590439/analista") or "")
+    assert "exterior" in (motivo_de_exclusao("https://www.disneycareers.com/pt-br") or "")
+
+
+def test_agregador_lido_inteiro_fica_com_a_entrada_que_mais_rendeu(
+    tmp_path: Path, monkeypatch
+) -> None:
+    catalogo = tmp_path / "origem" / "catalogo_fontes.csv"
+    catalogo.parent.mkdir()
+    catalogo.write_text(
+        "url\nhttps://empregandobrasil.com.br/vagas/analista-a/\n"
+        "https://empregandobrasil.com.br/vagas/analista-b/\n"
+        "https://www.jobijoba.com.br/detail/97/aaa\nhttps://www.jobijoba.com.br/detail/97/bbb\n",
+        encoding="utf-8",
+    )
+    alvos = triar_catalogo.carregar_alvos_csv_tolerante(catalogo).alvos
+    rendimento = {a.alvo_id: (9990 if a.url_inicial.endswith("analista-b/") else 19) for a in alvos}
+    monkeypatch.setattr(triar_catalogo, "_alvos_com_anuncio", lambda: rendimento)
+
+    triar_catalogo.triar(catalogo, tmp_path / "saida", com_mongo=True)
+
+    mantidas = (tmp_path / "saida" / "catalogo_fontes.csv").read_text(encoding="utf-8")
+    assert "analista-b" in mantidas and "analista-a" not in mantidas
+    # Jobijoba: cada entrada traz vagas diferentes, todas ficam.
+    assert "detail/97/aaa" in mantidas and "detail/97/bbb" in mantidas

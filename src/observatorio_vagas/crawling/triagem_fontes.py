@@ -53,6 +53,14 @@ _LOJA_OU_CURSO = re.compile(
     r"especializacao)(/|$)|[?&]product_cat=",
     re.IGNORECASE,
 )
+# Sites de vagas do exterior: na rodada de 06/10/2026, 9.591 das 9.773 vagas do
+# emploive.com foram barradas como fora do Brasil; drjobpro e disneycareers idem.
+DOMINIOS_FORA_DO_BRASIL = ("emploive.com", "drjobpro.com", "disneycareers.com")
+# Agregadores que a coleta lê inteiros a partir de qualquer entrada: com 63 entradas
+# do empregandobrasil, 5 leram ~10 mil anúncios cada, quase sempre os mesmos. Basta uma.
+# (jobijoba, BNE e trabalhabrasil NÃO entram: cada entrada traz vagas diferentes.)
+DOMINIOS_LIDOS_INTEIROS = ("empregandobrasil.com.br",)
+MOTIVO_ENTRADA_REPETIDA = "entrada repetida de agregador lido inteiro (fica uma só)"
 # Página que descreve uma ocupação (salário médio, atribuições), sem vaga.
 _DESCRICAO_DE_CARGO = re.compile(r"^(www\.)?cargos\.com\.br/cargo/", re.IGNORECASE)
 
@@ -75,9 +83,19 @@ def motivo_de_exclusao(url: str) -> str | None:
         _PALAVRA_DE_VAGA.search(caminho)
     ):
         return "produto, loja ou curso, não é página de vagas"
+    host = (partes.hostname or "").casefold().removeprefix("www.")
+    if any(host == d or host.endswith("." + d) for d in DOMINIOS_FORA_DO_BRASIL):
+        return "site de vagas do exterior (vagas barradas como fora do Brasil)"
     if _DESCRICAO_DE_CARGO.search((partes.hostname or "") + caminho):
         return "descrição de cargo (salário médio, atribuições), sem vaga"
     return None
+
+
+def dominio_lido_inteiro(url: str) -> str | None:
+    """Domínio do agregador lido inteiro a partir de qualquer entrada, ou None."""
+
+    host = (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+    return next((d for d in DOMINIOS_LIDOS_INTEIROS if host == d or host.endswith("." + d)), None)
 
 
 def tem_palavra_de_vaga(url: str) -> bool:

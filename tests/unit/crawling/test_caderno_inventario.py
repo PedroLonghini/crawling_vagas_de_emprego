@@ -1,5 +1,6 @@
 """Testes do caderno JSONL que acelera a leitura do inventário."""
 
+from datetime import datetime
 from pathlib import Path
 
 import pytest
@@ -97,3 +98,39 @@ def test_pipeline_grava_caderno_da_configuracao(tmp_path: Path) -> None:
     pipeline.close_spider()
 
     assert len(carregar_inventario_bruto_de_cadernos([caderno])) == 1
+
+
+def test_releitura_usa_o_indice_e_le_so_o_que_e_novo(tmp_path: Path, monkeypatch) -> None:
+    """A segunda releitura não abre de novo os metadados já lidos."""
+
+    from datetime import timedelta
+
+    from observatorio_vagas.crawling import inventario
+
+    _salvar_duas_respostas(tmp_path, tmp_path / "cadernos" / "lote.jsonl")
+    desde = DATA_INICIAL - timedelta(days=1)
+    monkeypatch.setattr(inventario, "datetime", _RelogioFixo)
+
+    primeira = inventario.carregar_inventario_bruto_desde(tmp_path, desde=desde)
+    assert len(primeira) == 2
+    assert list((tmp_path / "indices_metadados").rglob("*.jsonl"))
+
+    abertos: list[Path] = []
+    original = inventario._ler_metadados
+    monkeypatch.setattr(
+        inventario, "_ler_metadados", lambda c, b: abertos.append(c) or original(c, b)
+    )
+    segunda = inventario.carregar_inventario_bruto_desde(tmp_path, desde=desde)
+
+    assert segunda == primeira
+    assert abertos == []
+
+
+class _RelogioFixo(datetime):
+    """``datetime.now`` no dia seguinte às respostas de teste."""
+
+    @classmethod
+    def now(cls, tz=None):
+        from datetime import timedelta
+
+        return DATA_SEGUINTE + timedelta(days=1)

@@ -34,7 +34,9 @@ from observatorio_vagas.config import get_settings
 from observatorio_vagas.crawling.catalog import carregar_alvos_csv_tolerante
 from observatorio_vagas.crawling.triagem_fontes import (
     MOTIVO_EDITORIAL_SEM_ANUNCIO,
+    MOTIVO_ENTRADA_REPETIDA,
     classificar,
+    dominio_lido_inteiro,
     motivo_de_exclusao,
     tem_palavra_de_vaga,
 )
@@ -51,12 +53,33 @@ def _escrever_urls(caminho: Path, urls: list[str]) -> None:
         escritor.writerows((url,) for url in urls)
 
 
-def _alvos_com_anuncio() -> set[str]:
+def _alvos_com_anuncio() -> dict[str, int]:
+    """Anúncios gravados por alvo (só os alvos com pelo menos um)."""
+
     banco = ConexaoMongoDB(get_settings()).banco
     return {
-        documento["_id"]
-        for documento in banco["anuncios"].aggregate([{"$group": {"_id": "$alvo_id"}}])
+        documento["_id"]: documento["total"]
+        for documento in banco["anuncios"].aggregate(
+            [{"$group": {"_id": "$alvo_id", "total": {"$sum": 1}}}]
+        )
     }
+
+
+def _entrada_que_le_o_site_inteiro(alvos, com_anuncio: dict[str, int]) -> dict[str, str]:
+    """Para cada site lido inteiro a partir de qualquer entrada, o alvo que fica.
+
+    Fica o que mais rendeu anúncios na última rodada (sem Mongo, o primeiro do catálogo).
+    """
+
+    escolhido: dict[str, str] = {}
+    for alvo in alvos:
+        dominio = dominio_lido_inteiro(alvo.url_inicial)
+        if dominio is None:
+            continue
+        atual = escolhido.get(dominio)
+        if atual is None or com_anuncio.get(alvo.alvo_id, 0) > com_anuncio.get(atual, 0):
+            escolhido[dominio] = alvo.alvo_id
+    return escolhido
 
 
 def triar(catalogo: Path, saida: Path, *, com_mongo: bool) -> dict:
@@ -64,12 +87,16 @@ def triar(catalogo: Path, saida: Path, *, com_mongo: bool) -> dict:
     alvos = resultado.alvos
     saida.mkdir(parents=True, exist_ok=True)
 
-    com_anuncio = _alvos_com_anuncio() if com_mongo else set()
+    com_anuncio = _alvos_com_anuncio() if com_mongo else {}
+    unica_entrada = _entrada_que_le_o_site_inteiro(alvos, com_anuncio)
     mantidas: list[str] = []
     excluidas: list[tuple[str, str]] = []
     por_motivo: collections.Counter[str] = collections.Counter()
     for alvo in alvos:
         motivo = motivo_de_exclusao(alvo.url_inicial)
+        dominio = dominio_lido_inteiro(alvo.url_inicial)
+        if not motivo and dominio and unica_entrada.get(dominio) != alvo.alvo_id:
+            motivo = MOTIVO_ENTRADA_REPETIDA
         # Notícia, curso, produto ou institucional que já foi visitada e nunca rendeu
         # nenhum anúncio sai do catálogo; com anúncio, fica (pode ser vaga em notícia).
         if (

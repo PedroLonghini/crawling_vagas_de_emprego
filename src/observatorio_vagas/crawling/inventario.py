@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -13,6 +14,11 @@ from observatorio_vagas.domain.enums import TipoPaginaColeta
 
 # De quantos em quantos metadados o reprocessamento avisa o andamento.
 AVISO_DE_PROGRESSO = 10_000
+# Metadados lidos ao mesmo tempo no reprocessamento (acima de ~8 não ganha mais:
+# medido 203/s com 8, 195/s com 64).
+LEITURAS_SIMULTANEAS = 16
+# Índice dos metadados já lidos, um arquivo por pasta de fonte e dia.
+PASTA_INDICES = "indices_metadados"
 
 
 class ErroInventarioBruto(ValueError):
@@ -133,21 +139,53 @@ def carregar_inventario_bruto_desde(
     if inicio > fim:
         return ()
 
-    caminhos: list[Path] = []
+    pastas: list[Path] = []
     dia = inicio
     while dia <= fim:
         trecho_data = Path(f"{dia.year:04d}") / f"{dia.month:02d}" / f"{dia.day:02d}"
         for diretorio_fonte in diretorio_respostas.iterdir():
             pasta = diretorio_fonte / trecho_data
             if diretorio_fonte.is_dir() and pasta.is_dir():
-                caminhos.extend(pasta.glob("*.json"))
+                pastas.append(pasta)
         dia += timedelta(days=1)
 
-    registros = []
-    for lidos, caminho in enumerate(caminhos, start=1):
-        registros.append(_carregar_registro(caminho=caminho, diretorio_base=base))
-        if progresso is not None and (lidos % AVISO_DE_PROGRESSO == 0 or lidos == len(caminhos)):
-            progresso(lidos, len(caminhos))
+    # Cada metadado é um arquivo pequeno e quase todo o tempo é espera do disco e do
+    # antivírus (~70 arquivos/s em série: 1h22 para 251 mil no teste de 10 mil fontes).
+    # 1) O que já foi lido fica num índice por pasta (um arquivo só), e a próxima
+    #    releitura não abre de novo os milhares de arquivos.
+    # 2) O que falta é lido com várias leituras ao mesmo tempo (~200 arquivos/s,
+    #    o teto do disco com antivírus neste notebook).
+    conteudos: dict[Path, dict[str, Any]] = {}
+    faltam: list[tuple[Path, Path]] = []
+    for pasta in pastas:
+        indice = _caminho_do_indice(base, pasta)
+        guardados = _ler_indice(indice)
+        for caminho in pasta.glob("*.json"):
+            if caminho.name in guardados:
+                conteudos[caminho] = guardados[caminho.name]
+            else:
+                faltam.append((pasta, caminho))
+    total = len(conteudos) + len(faltam)
+    if progresso is not None and conteudos:
+        progresso(len(conteudos), total)
+
+    novos_por_pasta: dict[Path, list[tuple[str, dict[str, Any]]]] = {}
+    with ThreadPoolExecutor(max_workers=LEITURAS_SIMULTANEAS) as executor:
+        lidos_em_ordem = executor.map(lambda item: _ler_metadados(item[1], base), faltam)
+        for lidos, ((pasta, caminho), dados) in enumerate(
+            zip(faltam, lidos_em_ordem, strict=True), start=len(conteudos) + 1
+        ):
+            conteudos[caminho] = dados
+            novos_por_pasta.setdefault(pasta, []).append((caminho.name, dados))
+            if progresso is not None and (lidos % AVISO_DE_PROGRESSO == 0 or lidos == total):
+                progresso(lidos, total)
+    for pasta, novos in novos_por_pasta.items():
+        _acrescentar_ao_indice(_caminho_do_indice(base, pasta), novos)
+
+    registros = [
+        _registro_de_dados(dados, caminho.relative_to(base).as_posix())
+        for caminho, dados in conteudos.items()
+    ]
     return tuple(
         sorted(
             (registro for registro in registros if registro.coletado_em >= desde),
@@ -218,25 +256,53 @@ def _carregar_registro(
     """Converte um arquivo JSON em um registro do inventário."""
 
     referencia = caminho.relative_to(diretorio_base).as_posix()
+    return _registro_de_dados(_ler_metadados(caminho, diretorio_base), referencia)
+
+
+def _ler_metadados(caminho: Path, diretorio_base: Path) -> Any:
+    """Conteúdo do JSON de metadados (o HTML ou JSON bruto fica no arquivo .bin)."""
 
     try:
-        # Lemos somente os metadados.
-        #
-        # O HTML ou JSON bruto permanece no arquivo .bin.
-        conteudo = json.loads(
-            caminho.read_text(
-                encoding="utf-8",
-            )
-        )
-
-    except (
-        OSError,
-        UnicodeError,
-        json.JSONDecodeError,
-    ) as erro:
+        return json.loads(caminho.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as erro:
+        referencia = caminho.relative_to(diretorio_base).as_posix()
         raise ErroInventarioBruto(f"não foi possível ler os metadados: {referencia}") from erro
 
-    return _registro_de_dados(conteudo, referencia)
+
+def _caminho_do_indice(base: Path, pasta: Path) -> Path:
+    """data/raw/indices_metadados/<fonte>/<ano>/<mes>/<dia>.jsonl, fora das respostas."""
+
+    relativo = pasta.relative_to(base / "respostas")
+    return (base / PASTA_INDICES / relativo).with_suffix(".jsonl")
+
+
+def _ler_indice(indice: Path) -> dict[str, Any]:
+    """Metadados já lidos de uma pasta, por nome de arquivo. Índice ruim é ignorado."""
+
+    guardados: dict[str, Any] = {}
+    try:
+        with indice.open(encoding="utf-8") as arquivo:
+            for linha in arquivo:
+                try:
+                    item = json.loads(linha)
+                    guardados[item["nome"]] = item["dados"]
+                except (ValueError, KeyError, TypeError):
+                    continue
+    except OSError:
+        return {}
+    return guardados
+
+
+def _acrescentar_ao_indice(indice: Path, novos: list[tuple[str, Any]]) -> None:
+    """Guarda os metadados lidos agora; falha ao gravar só faz a próxima ler de novo."""
+
+    try:
+        indice.parent.mkdir(parents=True, exist_ok=True)
+        with indice.open("a", encoding="utf-8") as arquivo:
+            for nome, dados in novos:
+                arquivo.write(json.dumps({"nome": nome, "dados": dados}, ensure_ascii=False) + "\n")
+    except OSError:
+        return
 
 
 def _registro_de_dados(

@@ -478,3 +478,14 @@ def test_lista_de_materias_de_jornal_nao_vira_vaga() -> None:
     assert not extrair_job_posting_html_generico(
         html.encode(), url="https://jornal.example/especial/entrevista/", empresa_nome="X"
     ).vagas
+
+
+def test_chamada_de_varias_vagas_nao_e_uma_vaga() -> None:
+    for titulo in (
+        "Bunge: MULTINACIONAL tem mais de 70 vagas de trabalho disponíveis, confira - 99 Empregos",
+        "Besni: Varejista de moda tem EXCELENTES oportunidades, confira - 99 Empregos",
+        "Magazine Luiza abre 300 vagas",
+    ):
+        assert not _extrair(titulo, "https://empregos.example/vaga/x").vagas, titulo
+
+    assert _extrair("Auxiliar de Reposição - Arujá", "https://empregos.example/vaga/x").vagas

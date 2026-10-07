@@ -65,7 +65,40 @@ def _alvos_com_anuncio() -> dict[str, int]:
     }
 
 
-def _entrada_que_le_o_site_inteiro(alvos, com_anuncio: dict[str, int]) -> dict[str, str]:
+# Site lido inteiro a partir de qualquer entrada, detectado pelos anúncios: mais de
+# uma entrada do mesmo domínio e uma delas concentra quase tudo (os anúncios iguais
+# ficam com a última entrada que os gravou). Na coleta de 06/10/2026: maisvagases
+# (3 entradas x 1.877), 99empregos (3 x 997), app.jobfy.pro (2 x 3.176). Jobijoba e
+# BNE não entram: cada entrada traz poucas vagas diferentes (máximo 83 de ~1.000).
+MINIMO_ANUNCIOS_SITE_INTEIRO = 200
+FATIA_DA_ENTRADA_PRINCIPAL = 0.6
+
+
+def _host(url: str) -> str:
+    return (urlsplit(url).hostname or "").casefold().removeprefix("www.")
+
+
+def _dominios_lidos_inteiros(alvos, com_anuncio: dict[str, int]) -> set[str]:
+    por_dominio: dict[str, list[int]] = collections.defaultdict(list)
+    for alvo in alvos:
+        por_dominio[_host(alvo.url_inicial)].append(com_anuncio.get(alvo.alvo_id, 0))
+    return {
+        dominio
+        for dominio, totais in por_dominio.items()
+        if len(totais) > 1
+        and max(totais) >= MINIMO_ANUNCIOS_SITE_INTEIRO
+        and max(totais) >= FATIA_DA_ENTRADA_PRINCIPAL * sum(totais)
+    }
+
+
+def _dominio_lido_inteiro(url: str, detectados: set[str]) -> str | None:
+    host = _host(url)
+    return dominio_lido_inteiro(url) or (host if host in detectados else None)
+
+
+def _entrada_que_le_o_site_inteiro(
+    alvos, com_anuncio: dict[str, int], detectados: set[str] = frozenset()
+) -> dict[str, str]:
     """Para cada site lido inteiro a partir de qualquer entrada, o alvo que fica.
 
     Fica o que mais rendeu anúncios na última rodada (sem Mongo, o primeiro do catálogo).
@@ -73,7 +106,7 @@ def _entrada_que_le_o_site_inteiro(alvos, com_anuncio: dict[str, int]) -> dict[s
 
     escolhido: dict[str, str] = {}
     for alvo in alvos:
-        dominio = dominio_lido_inteiro(alvo.url_inicial)
+        dominio = _dominio_lido_inteiro(alvo.url_inicial, detectados)
         if dominio is None:
             continue
         atual = escolhido.get(dominio)
@@ -88,13 +121,14 @@ def triar(catalogo: Path, saida: Path, *, com_mongo: bool) -> dict:
     saida.mkdir(parents=True, exist_ok=True)
 
     com_anuncio = _alvos_com_anuncio() if com_mongo else {}
-    unica_entrada = _entrada_que_le_o_site_inteiro(alvos, com_anuncio)
+    detectados = _dominios_lidos_inteiros(alvos, com_anuncio)
+    unica_entrada = _entrada_que_le_o_site_inteiro(alvos, com_anuncio, detectados)
     mantidas: list[str] = []
     excluidas: list[tuple[str, str]] = []
     por_motivo: collections.Counter[str] = collections.Counter()
     for alvo in alvos:
         motivo = motivo_de_exclusao(alvo.url_inicial)
-        dominio = dominio_lido_inteiro(alvo.url_inicial)
+        dominio = _dominio_lido_inteiro(alvo.url_inicial, detectados)
         if not motivo and dominio and unica_entrada.get(dominio) != alvo.alvo_id:
             motivo = MOTIVO_ENTRADA_REPETIDA
         # Notícia, curso, produto ou institucional que já foi visitada e nunca rendeu

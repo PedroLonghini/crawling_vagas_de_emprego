@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import re
+import unicodedata
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import date, datetime
@@ -35,6 +37,7 @@ from observatorio_vagas.extraction.geolocalizacao_html import (
     extrair_coordenadas_html,
 )
 from observatorio_vagas.extraction.html_generico import (
+    TITULO_DE_LISTAGEM,
     extrair_job_posting_html_generico,
 )
 from observatorio_vagas.extraction.json_ld import (
@@ -295,6 +298,42 @@ def processar_respostas_brutas(
     )
 
 
+def _normalizado(texto: str | None, limite: int | None = None) -> str:
+    sem_acento = unicodedata.normalize("NFKD", (texto or "").casefold())
+    letras = "".join(c for c in sem_acento if not unicodedata.combining(c))
+    # Números saem: o site muda só o código/data ("-1040", "postado em 03/07").
+    compacto = " ".join(re.sub(r"[^a-z]+", " ", letras).split())
+    return compacto[:limite] if limite else compacto
+
+
+TEXTO_MINIMO_PARA_COMPARAR = 200
+
+
+def chave_de_conteudo(anuncio: AnuncioVaga) -> tuple[str, ...]:
+    """Mesma vaga publicada várias vezes pelo site com endereços diferentes.
+
+    O clickpetroleoegas publicou ~1.000 cópias de "Auxiliar Administrativo I - PCD"
+    (mesmo título e texto, só o número no fim da URL muda). Endereço sem números,
+    título, empresa, local e início do texto iguais = a mesma vaga.
+
+    Texto curto não compara: vagas do SINE/CKAN têm o mesmo texto padrão e são
+    vagas diferentes. Nesse caso a chave é o próprio anúncio (nunca repete).
+    """
+
+    texto = _normalizado(anuncio.descricao_original, 300)
+    if len(texto) < TEXTO_MINIMO_PARA_COMPARAR:
+        return (str(anuncio.fonte), anuncio.id_externo)
+    partes = urlsplit(str(anuncio.url))
+    return (
+        (partes.hostname or "").removeprefix("www."),
+        re.sub(r"\d+", "", partes.path),
+        _normalizado(anuncio.titulo_original),
+        _normalizado(anuncio.empresa_original),
+        _normalizado(anuncio.localidade_original),
+        texto,
+    )
+
+
 def combinar_parciais(
     parciais: Sequence[ParcialExtracao],
     *,
@@ -307,6 +346,7 @@ def combinar_parciais(
     """
 
     anuncios_unicos: dict[tuple[Fonte, str], AnuncioVaga] = {}
+    conteudos_vistos: set[tuple[str, ...]] = set()
     falhas: list[FalhaProcessamentoExtracao] = []
     duplicados_entre_pedacos = 0
 
@@ -314,11 +354,13 @@ def combinar_parciais(
         falhas.extend(parcial.falhas)
 
         for chave, anuncio in parcial.anuncios.items():
-            if chave in anuncios_unicos:
+            conteudo = chave_de_conteudo(anuncio)
+            if chave in anuncios_unicos or conteudo in conteudos_vistos:
                 duplicados_entre_pedacos += 1
                 continue
 
             anuncios_unicos[chave] = anuncio
+            conteudos_vistos.add(conteudo)
 
     selecionados = []
     fora_data = sem_data = 0
@@ -648,6 +690,7 @@ def _extrair_parcial(
         tuple[Fonte, str],
         AnuncioVaga,
     ] = {}
+    conteudos_vistos: set[tuple[str, ...]] = set()
 
     falhas: list[FalhaProcessamentoExtracao] = []
 
@@ -794,16 +837,26 @@ def _extrair_parcial(
 
                 continue
 
+            # Título de lista ou chamada ("975 Vagas de Emprego para...", "341 vagas em
+            # São Paulo/SP", "Bunge tem mais de 70 vagas, confira") não é uma vaga,
+            # venha de qualquer extrator: ~2.000 na coleta de 06/10/2026.
+            if TITULO_DE_LISTAGEM.search(anuncio.titulo_original):
+                paginas_ignoradas += 1
+                continue
+
             chave = anuncio.chave_fonte
+            conteudo = chave_de_conteudo(anuncio)
 
             # O inventário apresenta primeiro os registros
             # mais recentes. Portanto, quando a chave já existe,
-            # preservamos a observação mais nova.
-            if chave in anuncios_unicos:
+            # preservamos a observação mais nova. A mesma vaga republicada pelo site
+            # com outro endereço (mesmo título, empresa, local e texto) também conta.
+            if chave in anuncios_unicos or conteudo in conteudos_vistos:
                 anuncios_duplicados += 1
                 continue
 
             anuncios_unicos[chave] = anuncio
+            conteudos_vistos.add(conteudo)
 
     return ParcialExtracao(
         anuncios=anuncios_unicos,

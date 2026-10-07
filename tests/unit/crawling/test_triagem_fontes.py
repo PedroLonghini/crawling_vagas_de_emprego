@@ -141,3 +141,28 @@ def test_agregador_lido_inteiro_fica_com_a_entrada_que_mais_rendeu(
     assert "analista-b" in mantidas and "analista-a" not in mantidas
     # Jobijoba: cada entrada traz vagas diferentes, todas ficam.
     assert "detail/97/aaa" in mantidas and "detail/97/bbb" in mantidas
+
+
+def test_site_lido_inteiro_e_detectado_pelos_anuncios(tmp_path: Path, monkeypatch) -> None:
+    catalogo = tmp_path / "origem" / "catalogo_fontes.csv"
+    catalogo.parent.mkdir()
+    catalogo.write_text(
+        "url\nhttps://maisvagas.example/vaga/a/\nhttps://maisvagas.example/vaga/b/\n"
+        "https://maisvagas.example/vaga/c/\nhttps://portal.example/detail/1\n"
+        "https://portal.example/detail/2\n",
+        encoding="utf-8",
+    )
+    alvos = triar_catalogo.carregar_alvos_csv_tolerante(catalogo).alvos
+    rendimento = {}
+    for alvo in alvos:
+        if alvo.url_inicial.endswith("/b/"):
+            rendimento[alvo.alvo_id] = 1877  # a entrada que gravou o site inteiro
+        elif "portal.example" in alvo.url_inicial:
+            rendimento[alvo.alvo_id] = 60  # cada entrada traz vagas diferentes
+    monkeypatch.setattr(triar_catalogo, "_alvos_com_anuncio", lambda: rendimento)
+
+    triar_catalogo.triar(catalogo, tmp_path / "saida", com_mongo=True)
+
+    mantidas = (tmp_path / "saida" / "catalogo_fontes.csv").read_text(encoding="utf-8")
+    assert "vaga/b/" in mantidas and "vaga/a/" not in mantidas and "vaga/c/" not in mantidas
+    assert "detail/1" in mantidas and "detail/2" in mantidas

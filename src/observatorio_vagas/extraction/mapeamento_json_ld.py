@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import date, datetime
 from hashlib import sha256
 from typing import Any
@@ -235,7 +236,11 @@ def converter_job_posting_em_anuncio(
 ) -> AnuncioVaga:
     """Converte um JobPosting estruturado em anúncio auditável."""
 
+    # Título com entidade HTML ("Vendedor &#8211; Arujá", às vezes codificada duas
+    # vezes): 7.281 anúncios na coleta de 06/10/2026. Vira o caractere.
     titulo = _texto(documento.get("title"))
+    if titulo is not None and "&" in titulo:
+        titulo = " ".join(html.unescape(html.unescape(titulo)).split()) or None
 
     if titulo is None:
         raise ValueError("JobPosting não possui title")

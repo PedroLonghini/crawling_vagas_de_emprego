@@ -460,10 +460,7 @@ def test_processa_detalhe_da_teleperformance_sem_json_ld(tmp_path: Path) -> None
     comunicação clara, atenção aos detalhes e foco em uma boa experiência.&lt;/p&gt;
     &lt;p&gt;Local: Lapa – São Paulo/SP&lt;/p&gt;">
     """
-    url = (
-        "https://portaldevagas.teleperformance.com.br/VagaCandidatura/VagasDetail?"
-        "idVaga=abc123"
-    )
+    url = "https://portaldevagas.teleperformance.com.br/VagaCandidatura/VagasDetail?idVaga=abc123"
     salvar_pagina(
         tmp_path,
         html=html,
@@ -736,3 +733,51 @@ def test_extracao_em_pedacos_e_identica_a_sequencial(tmp_path: Path) -> None:
     assert sequencial.anuncios_duplicados == 10
     assert sequencial.paginas_sem_json_ld == 1
     assert len(sequencial.anuncios) == 20
+
+
+def test_mesma_vaga_publicada_com_varios_enderecos_conta_uma_vez() -> None:
+    from observatorio_vagas.domain.anuncio import AnuncioVaga
+    from observatorio_vagas.domain.enums import Fonte
+    from observatorio_vagas.extraction.processador import chave_de_conteudo
+
+    def anuncio(sufixo: str, local: str = "Macaé - RJ") -> AnuncioVaga:
+        return AnuncioVaga(
+            fonte=Fonte.PAGINA_CARREIRAS,
+            id_externo=f"id-{sufixo}",
+            url=f"https://vagas.click.example/vagas/auxiliar-administrativo-pcd-{sufixo}/",
+            titulo_original="AUXILIAR ADMINISTRATIVO I- VAGA EXCLUSIVA PARA PESSOA COM DEFICIENCIA",
+            descricao_original=(
+                "A hora de fazer parte de um time comprometido, acolhedor e que valoriza "
+                "a diversidade. Atividades: rotinas administrativas, atendimento e apoio "
+                "ao setor de compras e ao almoxarifado da unidade offshore. Requisitos: "
+                f"ensino médio completo e pacote office intermediário. Código {sufixo}."
+            ),
+            localidade_original=local,
+            hash_conteudo="a" * 64,
+            referencia_bruta=f"raw/{sufixo}.json",
+        )
+
+    assert chave_de_conteudo(anuncio("1040")) == chave_de_conteudo(anuncio("872"))
+    assert chave_de_conteudo(anuncio("1040")) != chave_de_conteudo(anuncio("1040", "Niterói - RJ"))
+    # Texto curto (SINE/CKAN): vagas iguais de empresas diferentes não se juntam.
+    curto_a = anuncio("1").model_copy(update={"descricao_original": "Vaga do SINE."})
+    curto_b = anuncio("2").model_copy(update={"descricao_original": "Vaga do SINE."})
+    assert chave_de_conteudo(curto_a) != chave_de_conteudo(curto_b)
+
+
+def test_titulo_com_entidade_html_vira_caractere() -> None:
+    from observatorio_vagas.extraction.mapeamento_json_ld import converter_job_posting_em_anuncio
+
+    anuncio = converter_job_posting_em_anuncio(
+        {
+            "@type": "JobPosting",
+            "title": "Auxiliar De Reposição &#8211; Arujá",
+            "description": "Repor mercadorias.",
+            "url": "https://farma.example/vagas/1",
+        },
+        fonte=Fonte.PAGINA_CARREIRAS,
+        hash_conteudo="b" * 64,
+        referencia_bruta="raw/1.json",
+    )
+
+    assert anuncio.titulo_original == "Auxiliar De Reposição – Arujá"

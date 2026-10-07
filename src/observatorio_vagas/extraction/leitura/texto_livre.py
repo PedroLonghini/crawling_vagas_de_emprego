@@ -139,7 +139,8 @@ def interpretar_modalidade(
 
 _VINCULOS = (
     ("INTERNSHIP", r"\b(estagio|estagiari[oa]s?|internship)\b"),
-    ("TEMPORARY", r"\b(temporari[oa]s?|temporary)\b"),
+    # "vistos temporários", "residência temporária" não falam do contrato da vaga.
+    ("TEMPORARY", r"\b(?<!vistos )(?<!visto )(?<!residencia )(temporari[oa]s?|temporary)\b"),
     (
         "CONTRACT",
         r"\b(pj|pessoa juridica|freelancer?|freela|autonomo"

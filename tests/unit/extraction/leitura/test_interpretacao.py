@@ -516,3 +516,39 @@ def test_portal_com_nome_igual_ao_dominio_nao_vira_empresa():
     # Empresa citada pela vaga continua valendo no mesmo portal.
     real = {"@type": "JobPosting", "hiringOrganization": {"name": "Atacadão"}}
     assert _ler_empresa(url, real, site="Empregos Pernambuco") == "Atacadão"
+
+
+def test_slogan_sai_do_nome_da_empresa():
+    from observatorio_vagas.extraction.leitura.interpretacao import _nome_empresa
+
+    assert _nome_empresa(
+        "Assaí Atacadista - O atacadista com 50 anos de tradição! #VemserAssaí"
+    ) == ("Assaí Atacadista")
+    assert _nome_empresa("RD Saúde - Farmácias") == "RD Saúde - Farmácias"
+
+
+def test_estado_por_extenso_vira_uf():
+    vaga = {
+        "@type": "JobPosting",
+        "title": "Motorista Logístico",
+        "jobLocation": {"address": {"addressLocality": "Campinas , São Paulo"}},
+    }
+
+    assert _ler_local(vaga) == "Campinas, SP"
+
+
+def test_cep_do_rodape_de_agregador_nao_vira_cep_da_vaga():
+    corpo = (
+        "<p>Vaga de motorista logístico para entregas na região. Requisitos: CNH D.</p>"
+        "<footer>Av. Governador Flávio Ribeiro Coutinho, 500 - João Pessoa - CEP: 58037-005</footer>"
+    )
+    html = f"<html><body><h1>Motorista Logístico</h1>{corpo}</body></html>"
+    url = "https://www.jobbrazil.com/vaga/1"
+    leitura = ler_vaga(
+        montar_inventario(html.encode(), url=url),
+        titulo="Motorista Logístico",
+        id_externo="1",
+        url_vaga=url,
+    )
+
+    assert "postalCode" not in (leitura.campos.get("location") or {})

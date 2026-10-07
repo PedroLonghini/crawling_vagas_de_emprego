@@ -521,6 +521,16 @@ def limpar_descricao(texto: str) -> str:
     return re.sub(r"\n{3,}", "\n\n", "\n".join(linhas)).strip()
 
 
+UF_POR_NOME_DE_ESTADO = {
+    "acre": "AC", "alagoas": "AL", "amapa": "AP", "amazonas": "AM", "bahia": "BA",
+    "ceara": "CE", "distrito federal": "DF", "espirito santo": "ES", "goias": "GO",
+    "maranhao": "MA", "mato grosso": "MT", "mato grosso do sul": "MS", "minas gerais": "MG",
+    "para": "PA", "paraiba": "PB", "parana": "PR", "pernambuco": "PE", "piaui": "PI",
+    "rio de janeiro": "RJ", "rio grande do norte": "RN", "rio grande do sul": "RS",
+    "rondonia": "RO", "roraima": "RR", "santa catarina": "SC", "sao paulo": "SP",
+    "sergipe": "SE", "tocantins": "TO",
+}  # fmt: skip
+
 _CIDADE_UF_PARENTESES = re.compile(
     r"(?P<cidade>[^()]{2,60}?)\s*\((?P<uf>AC|AL|AP|AM|BA|CE|DF|ES|GO|MA|MT|MS|MG|PA|PB|PR|PE|PI|"
     r"RJ|RN|RS|RO|RR|SC|SP|SE|TO)\)"
@@ -757,9 +767,18 @@ def _posting_da_vaga(
 
 
 def _nome_empresa(bruto: str) -> str:
-    """Separa a cidade grudada no nome: "TAESA (João Pessoa/PB)" -> "TAESA"."""
+    """Separa a cidade grudada no nome: "TAESA (João Pessoa/PB)" -> "TAESA".
 
-    return re.sub(r"\s*\((?:[^()]*/[A-Z]{2}|[^()]*\b[A-Z]{2})\)\s*$", "", bruto).strip()
+    Também tira o slogan: "Assaí Atacadista - O atacadista com 50 anos de tradição!
+    #VemserAssaí" -> "Assaí Atacadista". Só corta quando o resto tem cara de frase
+    (!, ?, # ou 6+ palavras); "RD Saúde - Farmácias" fica como está.
+    """
+
+    nome = re.sub(r"\s*\((?:[^()]*/[A-Z]{2}|[^()]*\b[A-Z]{2})\)\s*$", "", bruto).strip()
+    partes = re.split(r"\s+[-–|:]\s+", nome, maxsplit=1)
+    if len(partes) == 2 and (re.search(r"[!?#]", partes[1]) or len(partes[1].split()) >= 6):
+        return partes[0].strip()
+    return nome
 
 
 def _vinculo(valor: str, origem: str) -> Leitura | Indefinido | None:
@@ -1072,7 +1091,9 @@ def ler_vaga(
             ("corpo", lambda: interpretar_cnpj(texto_vaga or "", "corpo")),
             (
                 "rodape",
-                lambda: None if eh_plataforma else interpretar_cnpj(inv.texto_rodape, "rodape"),
+                # O rodapé é do dono do site: em portal/agregador o CNPJ é do portal
+                # (Folha, turismoemfoco na auditoria de 06/10/2026), não da empresa.
+                lambda: None if site_de_terceiros else interpretar_cnpj(inv.texto_rodape, "rodape"),
             ),
         ],
         validar=lambda v: None if cnpj_valido(str(v)) else "CNPJ inválido (dígito verificador)",
@@ -1120,6 +1141,11 @@ def ler_vaga(
         ],
         validar=lambda v: validar_endereco(limpar_texto(str(v)) or ""),
     )
+    # "Campinas , São Paulo" (eu.dev.br) -> "Campinas, SP": estado por extenso vira UF.
+    if endereco and (com_estado := re.fullmatch(r"(.+?)\s*,\s*([^,]+)", str(endereco).strip())):
+        uf = UF_POR_NOME_DE_ESTADO.get(normalizar(com_estado[2]).strip())
+        if uf:
+            endereco = f"{com_estado[1].strip()}, {uf}"
     # "São Paulo (SP)" (Jobijoba) -> "São Paulo, SP".
     if endereco and (uf_entre_parenteses := _CIDADE_UF_PARENTESES.fullmatch(str(endereco).strip())):
         endereco = f"{uf_entre_parenteses['cidade'].strip()}, {uf_entre_parenteses['uf']}"
@@ -1148,7 +1174,9 @@ def ler_vaga(
             ("corpo", lambda: interpretar_cep(texto_vaga or "", "corpo")),
             (
                 "rodape",
-                lambda: None if eh_plataforma else interpretar_cep(inv.texto_rodape, "rodape"),
+                # Rodapé de portal/agregador é o endereço do portal, não o local da vaga
+                # (CEP 58037-005 do turismoemfoco). No site da empresa, vale.
+                lambda: None if site_de_terceiros else interpretar_cep(inv.texto_rodape, "rodape"),
             ),
         ],
     )

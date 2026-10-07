@@ -31,7 +31,9 @@ TITULO_DE_LISTAGEM = re.compile(
     # Chamada que anuncia várias vagas de uma empresa, não uma vaga (99empregos:
     # "Bunge: MULTINACIONAL tem mais de 70 vagas de trabalho disponíveis, confira").
     r"\b(tem|abre|oferece|anuncia|divulga|disponibiliza)\b.{0,60}\b(vagas|oportunidades)\b"
-    r".{0,80}\bconfira\b|\bmais de \d+ vagas\b|\b(tem|abre) (diversas|v[aá]rias|\d+) vagas\b",
+    r".{0,80}\bconfira\b|\bmais de \d+ vagas\b|\b(tem|abre) (diversas|v[aá]rias|\d+) vagas\b|"
+    # Páginas de lista do eu.dev.br: "Vagas com Full-Stack — 300 abertas", "Carreira · ...".
+    r"\b\d+ abertas?\b|^vagas com\b|^carreiras?\s*[·|–-]",
     re.IGNORECASE,
 )
 CAMINHO_EDITORIAL = re.compile(

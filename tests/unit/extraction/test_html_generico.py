@@ -489,3 +489,11 @@ def test_chamada_de_varias_vagas_nao_e_uma_vaga() -> None:
         assert not _extrair(titulo, "https://empregos.example/vaga/x").vagas, titulo
 
     assert _extrair("Auxiliar de Reposição - Arujá", "https://empregos.example/vaga/x").vagas
+
+
+def test_paginas_de_lista_do_eu_dev_nao_sao_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import TITULO_DE_LISTAGEM
+
+    assert TITULO_DE_LISTAGEM.search("Vagas com Full-Stack — 300 abertas (Remoto e Híbrido)")
+    assert TITULO_DE_LISTAGEM.search("Carreira · eu.dev.br")
+    assert not TITULO_DE_LISTAGEM.search("Desenvolvedor Back-end · eu.dev.br")

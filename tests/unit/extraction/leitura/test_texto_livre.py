@@ -250,3 +250,8 @@ def test_uf_colada_e_rotulo_de_tres_palavras() -> None:
 
 def test_cidade_com_uf_entre_parenteses() -> None:
     assert _local("Local: São Paulo (SP)") == "São Paulo, SP"
+
+
+def test_visto_temporario_nao_e_contrato_temporario() -> None:
+    assert interpretar_vinculo("planejamento com vistos temporários de trabalho", "t") is None
+    assert interpretar_vinculo("Contrato temporário de 3 meses", "t").valor == "TEMPORARY"

@@ -279,6 +279,11 @@ def test_extrai_campos_em_tabela_e_lista_de_definicao_sem_dois_pontos() -> None:
 
 
 DESCRICAO_LONGA = "Responsabilidades: atender clientes, organizar rotinas e apoiar a equipe. " * 5
+# Vaga publicada como post/notícia: requisitos e como se candidatar (regra das matérias).
+DESCRICAO_DE_POST = (
+    DESCRICAO_LONGA
+    + " Requisitos: ensino médio completo. Envie seu currículo para rh@empresa.example."
+)
 
 
 def _extrair(titulo: str, url: str, descricao: str = DESCRICAO_LONGA):
@@ -332,7 +337,7 @@ def _extrair_com_json_ld(
     html = (
         f'<html><head><script type="application/ld+json">{tipos}</script>'
         f"<title>{titulo}</title></head><body><h1>{titulo}</h1>"
-        f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+        f'<div class="job-description">{DESCRICAO_DE_POST}</div></body></html>'
     )
     return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="Empresa")
 
@@ -398,7 +403,7 @@ def _empresa(site_name: str, json_ld: str = '{"@type": "WebPage"}', empresa_nome
     html = (
         f'<html><head><meta property="og:site_name" content="{site_name}">'
         f'<script type="application/ld+json">{json_ld}</script></head><body>'
-        f'<h1>Operador de Máquina</h1><div class="job-description">{DESCRICAO_LONGA}</div>'
+        f'<h1>Operador de Máquina</h1><div class="job-description">{DESCRICAO_DE_POST}</div>'
         "</body></html>"
     )
     vagas = extrair_job_posting_html_generico(
@@ -509,3 +514,11 @@ def test_busca_curso_e_chamada_de_noticia_nao_sao_vaga() -> None:
     ):
         assert TITULO_DE_LISTAGEM.search(titulo), titulo
     assert not TITULO_DE_LISTAGEM.search("Auxiliar de Cozinha - Turno Noite")
+
+
+def test_reportagem_de_muitas_vagas_nao_e_uma_vaga() -> None:
+    noticia = '{"@type": "Article"}'
+
+    assert not _extrair_com_json_ld(
+        noticia, "Outback abre 92 vagas em Campinas", "https://j.example/v/1"
+    ).vagas

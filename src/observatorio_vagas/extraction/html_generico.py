@@ -180,6 +180,10 @@ def nome_de_portal(nome: str, tipos: set[str] | frozenset[str] = frozenset()) ->
 
 
 DATAS_QUE_INDICAM_LISTA_DE_MATERIAS = 5
+_VARIAS_VAGAS = re.compile(
+    r"\b\d{2,}(\.\d{3})?\s+(novas\s+)?vagas\b|"
+    r"\b(v[aá]rias|diversas|centenas de|milhares de)\s+vagas\b"
+)
 _REQUISITOS = re.compile(r"requisit|qualifica[cç][oõ]es|pr[eé]-requisit")
 _COMO_SE_CANDIDATAR = re.compile(
     r"candidat|curr[ií]culo|inscri[cç]|inscreva|envie|enviar|interessados devem enviar"
@@ -222,22 +226,32 @@ def pagina_nao_e_vaga(seletor: Selector, titulo: str, url: str = "") -> bool:
     # og:type=article sozinho não conta: o WordPress marca TODA página assim (as 92
     # vagas da Comdarpe têm og:type=article). Só o JSON-LD de notícia/post conta, e
     # ainda assim a vaga vale se o título ou o endereço falarem de vaga.
-    if tipos & TIPOS_EDITORIAIS:
-        return not fala_de_vaga
-    # Matéria sem JSON-LD de notícia (auditoria de 06/10/2026): autor e data marcados
-    # na página (turismoemfoco, "Azul anuncia contratação de 446 pilotos") ou site de
-    # jornal (Folha, NewsMediaOrganization). Lista de matérias nunca é vaga; matéria
-    # só vale se falar de vaga E tiver cara de vaga: requisitos e como se candidatar.
+    # Matéria: JSON-LD de notícia/post (logweb, jornalrmc, reportermaceio, sejatrainee
+    # na auditoria de 07/10/2026), autor e data marcados na página (turismoemfoco),
+    # site de jornal (Folha, NewsMediaOrganization) ou o aviso "artigo continua abaixo"
+    # (clickpetroleoegas). Lista de matérias nunca é vaga; matéria só vale se falar de
+    # vaga E tiver cara de vaga: requisitos e como se candidatar.
     datas = len(seletor.css('[itemprop="datePublished"]'))
+    texto_pagina = " ".join(seletor.xpath("string(//body)").get("").split()).casefold()
     materia = (
-        bool(seletor.css('[itemprop="author"]')) and datas > 0
-    ) or _tem_tipo_em_qualquer_lugar(seletor, "newsmediaorganization")
+        bool(tipos & TIPOS_EDITORIAIS)
+        or (bool(seletor.css('[itemprop="author"]')) and datas > 0)
+        or _tem_tipo_em_qualquer_lugar(seletor, "newsmediaorganization")
+        or "artigo continua abaixo" in texto_pagina
+    )
     if not materia:
         return False
     if datas >= DATAS_QUE_INDICAM_LISTA_DE_MATERIAS:
         return True
-    texto = " ".join(seletor.xpath("string(//body)").get("").split()).casefold()
-    tem_cara_de_vaga = bool(_REQUISITOS.search(texto) and _COMO_SE_CANDIDATAR.search(texto))
+    # Reportagem sobre contratação, não a vaga: "Outback abre 92 vagas" (jornalrmc) ou
+    # aviso de publicidade no meio do texto (clickpetroleoegas).
+    if "artigo continua abaixo" in texto_pagina or _VARIAS_VAGAS.search(
+        f"{titulo.casefold()} {texto_pagina[:1500]}"
+    ):
+        return True
+    tem_cara_de_vaga = bool(
+        _REQUISITOS.search(texto_pagina) and _COMO_SE_CANDIDATAR.search(texto_pagina)
+    )
     return not (fala_de_vaga and tem_cara_de_vaga)
 
 

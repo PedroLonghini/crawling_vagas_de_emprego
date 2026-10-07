@@ -561,6 +561,14 @@ _NOME_GENERICO = re.compile(
 _NOME_OCULTO = re.compile(r"^(empresa |cliente )?(confidencial|confidential|sigilos[ao])$")
 
 
+def _nome_de_midia(nome: str) -> bool:
+    """ "Jornal RMC", "Portal Logweb", "Notícias Botucatu": o site é mídia ou portal."""
+
+    from observatorio_vagas.extraction.html_generico import NOME_DE_PORTAL_FORTE
+
+    return bool(NOME_DE_PORTAL_FORTE.search(nome))
+
+
 def _nome_generico_ou_oculto(nome: object) -> bool:
     if not isinstance(nome, str):
         return False
@@ -938,13 +946,16 @@ def ler_vaga(
                     None if plataforma == "randstad" else _jsonld(inv, "hiringOrganization", "name")
                 ),
             ),
-            (
-                "documento.hiringOrganization.name",
-                lambda: _organizacao(documento).get("name"),
-            ),
+            # Marcação explícita da página vem antes do documento: o documento cai no
+            # nome do site quando não acha a empresa ("Vemseriguatemi" x "Iguatemi").
             (
                 "microdata.hiringOrganization.name",
                 lambda: inv.meta.get("microdata:hiringOrganization"),
+            ),
+            ("html.company", lambda: inv.meta.get("html:company")),
+            (
+                "documento.hiringOrganization.name",
+                lambda: _organizacao(documento).get("name"),
             ),
             (
                 "texto.empresa_confidencial",
@@ -992,6 +1003,8 @@ def ler_vaga(
             if (marca := consultoria_de_rh(url_vaga)) and marca in normalizar(str(v))
             else "nome do próprio site (agregador/plataforma), não da empresa"
             if site_de_terceiros and nome_e_do_site(str(v), url_vaga)
+            else "nome de jornal, blog ou portal (o site), não da empresa"
+            if str(v) == inv.meta.get("og:site_name") and _nome_de_midia(str(v))
             else None
         ),
     )
@@ -1110,12 +1123,28 @@ def ler_vaga(
     campos["company"] = empresa
 
     # 14. description
+    def _descricao_json_ld() -> str | None:
+        """JSON-LD que é só a introdução fica de fora quando a página tem a vaga inteira.
+
+        jobfy: o JSON-LD traz só "Descrição"; o corpo tem também Atividades e
+        Requisitos (auditoria de 07/10/2026). Vale o bloco quando ele é bem maior e
+        começa com o mesmo texto do JSON-LD.
+        """
+
+        texto = html_para_texto(_jsonld(inv, "description"))
+        if not texto or not bloco:
+            return texto
+        inicio = normalizar(" ".join(texto.split()))[:60]
+        if len(bloco) >= 1.5 * len(texto) and inicio in normalizar(" ".join(bloco.split())):
+            return None
+        return texto
+
     descricao = _primeiro(
         diag,
         "description",
         [
             ("plataforma", plat("description")),
-            ("json_ld.description", lambda: html_para_texto(_jsonld(inv, "description"))),
+            ("json_ld.description", _descricao_json_ld),
             ("documento.description", None if doc_e_resumo else descricao_doc),
             ("corpo.bloco_da_vaga", bloco),
             ("corpo", lambda: inv.texto_corpo),

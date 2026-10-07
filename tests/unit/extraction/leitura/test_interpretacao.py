@@ -566,3 +566,39 @@ def test_portal_emprega_com_nome_igual_ao_dominio():
     vaga = {"@type": "JobPosting", "hiringOrganization": {"name": "Emprega São Paulo"}}
 
     assert _ler_empresa("https://empregasaopaulo.com.br/vaga/1", vaga) == "confidential"
+
+
+def test_empresa_ao_lado_do_titulo_e_microdata_com_content():
+    url = "https://empregospernambuco.com.br/vaga/1"
+    portal = {"@type": "JobPosting", "hiringOrganization": {"name": "Empregos Pernambuco"}}
+    corpo = (
+        '<div class="job-meta"><span class="company"><a href="#">Usina São José</a></span></div>'
+    )
+    assert _ler_empresa(url, portal, corpo=corpo) == "Usina São José"
+
+    iguatemi = '<meta itemprop="hiringOrganization" content="Iguatemi">'
+    assert _ler_empresa("https://vemseriguatemi.com.br/vaga/1", corpo=iguatemi) == "Iguatemi"
+
+
+def test_json_ld_so_com_a_introducao_perde_para_o_bloco_completo():
+    intro = "Estamos em busca de um Analista de Departamento Pessoal para a nossa equipe."
+    vaga = {"@type": "JobPosting", "title": "Analista de DP", "description": intro}
+    corpo = (
+        "<h1>Analista de DP</h1><p>" + intro + "</p>"
+        "<h2>Atividades</h2><p>"
+        + "Realizar admissões, demissões e folha de pagamento. "
+        * 6
+        + "</p>"
+        "<h2>Requisitos</h2><p>Ensino superior em RH ou áreas afins e experiência com eSocial.</p>"
+        "<p>Candidate-se</p>"
+    )
+    html = f'<html><head><script type="application/ld+json">{json.dumps(vaga)}</script></head><body>{corpo}</body></html>'
+    url = "https://app.jobfy.example/publico/vaga/1"
+    leitura = ler_vaga(
+        montar_inventario(html.encode(), url=url),
+        titulo="Analista de DP",
+        id_externo="1",
+        url_vaga=url,
+    )
+
+    assert "eSocial" in leitura.campos["description"]

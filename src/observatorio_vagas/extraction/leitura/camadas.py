@@ -201,8 +201,21 @@ def montar_inventario(
     for organizacao in raiz.xpath('//*[@itemprop="hiringOrganization"]'):
         nomes = organizacao.xpath('.//*[@itemprop="name"]')
         nome = (nomes[0].get("content") or _texto(nomes[0]) or "").strip() if nomes else ""
+        # Iguatemi: <meta itemprop="hiringOrganization" content="Iguatemi">, sem filho.
+        nome = nome or (organizacao.get("content") or "").strip()
         if nome:
             inventario.meta.setdefault("microdata:hiringOrganization", nome)
+            break
+    # Plugin de vagas do WordPress (WP Job Manager): a empresa fica ao lado do título,
+    # em <span class="company"> dentro do bloco da vaga (empregospernambuco: "Usina São
+    # José"), enquanto o JSON-LD traz o nome do portal.
+    for elemento in raiz.xpath(
+        '//*[contains(concat(" ", normalize-space(@class), " "), " company ")]'
+        '[ancestor::*[contains(@class, "job")]]'
+    ):
+        nome = _texto(elemento)
+        if 2 < len(nome) <= 80:
+            inventario.meta.setdefault("html:company", nome)
             break
 
     titulos = raiz.xpath("//title")

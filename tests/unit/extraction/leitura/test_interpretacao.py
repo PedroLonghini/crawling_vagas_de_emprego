@@ -500,3 +500,19 @@ def test_lista_lateral_de_vagas_abertas_encerra_o_bloco_da_vaga():
 
     assert bloco and "Motorista de Carreta" not in bloco and "(estágio)" not in bloco
     assert "Requisitos Experiência" in limpar_descricao(bloco)
+
+
+def test_texto_padrao_no_lugar_da_empresa_vira_confidential():
+    for nome in ("Empregador", "Empresa confidencial", "Não informado", "EMPRESA SIGILOSA"):
+        vaga = {"@type": "JobPosting", "hiringOrganization": {"name": nome}}
+        assert _ler_empresa("https://amanha.example/vagas/1", vaga) == "confidential", nome
+
+
+def test_portal_com_nome_igual_ao_dominio_nao_vira_empresa():
+    vaga = {"@type": "JobPosting", "hiringOrganization": {"name": "Empregos Pernambuco"}}
+    url = "https://empregospernambuco.com.br/vaga/1"
+
+    assert _ler_empresa(url, vaga, site="Empregos Pernambuco") == "confidential"
+    # Empresa citada pela vaga continua valendo no mesmo portal.
+    real = {"@type": "JobPosting", "hiringOrganization": {"name": "Atacadão"}}
+    assert _ler_empresa(url, real, site="Empregos Pernambuco") == "Atacadão"

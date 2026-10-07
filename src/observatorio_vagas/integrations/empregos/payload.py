@@ -15,6 +15,7 @@ Sua responsabilidade é somente:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from observatorio_vagas.domain.prontidao import (
@@ -224,6 +225,8 @@ CNPJ_ZERADO = "00.000.000/0000-00"
 # Escrita que o JSON de republicação usa quando a fonte esconde o nome da empresa:
 # "confidential", com c minúsculo (confirmado pelo usuário em 05/10/2026).
 NOME_EMPRESA_CONFIDENCIAL = "confidential"
+# "Confidencial", "Empresa confidencial", "Empresa Sigilosa"... -> "confidential".
+_NOME_OCULTO = re.compile(r"^(empresa |cliente )?(confidencial|confidential|sigilos[ao])$")
 
 
 def _ajustar_para_a_api(payload: dict[str, Any]) -> None:
@@ -233,7 +236,7 @@ def _ajustar_para_a_api(payload: dict[str, Any]) -> None:
     empresa["nationalRegister"] = CNPJ_ZERADO
 
     nome = empresa.get("name")
-    if isinstance(nome, str) and nome.strip().casefold() in ("confidential", "confidencial"):
+    if isinstance(nome, str) and _NOME_OCULTO.match(" ".join(nome.casefold().split()).strip(" .")):
         empresa["name"] = NOME_EMPRESA_CONFIDENCIAL
 
 

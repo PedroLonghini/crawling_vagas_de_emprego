@@ -542,6 +542,25 @@ CONSULTORIAS_DE_RH = {
     "robertwalters.com.br": "robert walters",
 }
 NOME_CONFIDENCIAL = "confidential"
+# Texto padrão que o site põe no lugar da empresa (amanha.com.br: "Empregador", 606
+# vagas na coleta de 06/10/2026) ou que diz que ela é oculta. Nunca é o nome.
+_NOME_GENERICO = re.compile(
+    r"^(o |a )?(empregador|empresa|anunciante|contratante|empresa contratante|empresa parceira|"
+    r"cliente|nao informad[oa]|empresa nao informada|n/?a|-+)$"
+)
+_NOME_OCULTO = re.compile(r"^(empresa |cliente )?(confidencial|confidential|sigilos[ao])$")
+
+
+def _nome_generico_ou_oculto(nome: object) -> bool:
+    if not isinstance(nome, str):
+        return False
+    limpo = " ".join(normalizar(nome).split()).strip(" .")
+    return bool(_NOME_GENERICO.match(limpo) or _NOME_OCULTO.match(limpo))
+
+
+# Nome do site igual ao domínio e com palavra de portal: o site é um portal de vagas
+# ("Empregos Pernambuco" em empregospernambuco.com.br, 2.073 vagas).
+_PALAVRA_DE_PORTAL = re.compile(r"\b(vagas?|empregos?|jobs?|carreiras?)\b|^mais ?vagas")
 _EMPRESA_CONFIDENCIAL = re.compile(
     r"\b(empresa|cliente|contratante)\s+(confidencial|sigilos[ao])\b", re.IGNORECASE
 )
@@ -787,7 +806,13 @@ def ler_vaga(
     eh_plataforma = plataforma is not None or any(
         (urlsplit(url_vaga).hostname or "").endswith(h) for h in HOSTS_PLATAFORMA
     )
-    agregador = e_agregador(url_vaga)
+    nomes_do_site = (inv.meta.get("og:site_name"), _organizacao(documento).get("name"))
+    agregador = e_agregador(url_vaga) or any(
+        isinstance(nome, str)
+        and nome_e_do_site(nome, url_vaga)
+        and _PALAVRA_DE_PORTAL.search(normalizar(nome))
+        for nome in nomes_do_site
+    )
     site_de_terceiros = agregador or eh_plataforma or e_site_de_terceiros(url_vaga)
     diag = _Diagnostico(inv.camadas())
     p: dict[str, Candidato] = {}
@@ -870,6 +895,15 @@ def ler_vaga(
     )
 
     # 2. name
+    def _nomes_brutos_da_empresa() -> list[object]:
+        candidato_plataforma = p.get("company.name")
+        return [
+            candidato_plataforma.valor if candidato_plataforma else None,
+            _jsonld(inv, "hiringOrganization", "name"),
+            _organizacao(documento).get("name"),
+            inv.meta.get("microdata:hiringOrganization"),
+        ]
+
     nome = _primeiro(
         diag,
         "company.name",
@@ -911,12 +945,24 @@ def ler_vaga(
                 "consultoria.cliente_oculto",
                 lambda: NOME_CONFIDENCIAL if consultoria_de_rh(url_vaga) else None,
             ),
+            # A fonte disse que a empresa é oculta ou pôs um texto padrão no lugar dela
+            # ("Empresa confidencial", "Empregador", "Não informado").
+            (
+                "fonte.empresa_oculta",
+                lambda: (
+                    NOME_CONFIDENCIAL
+                    if any(_nome_generico_ou_oculto(n) for n in _nomes_brutos_da_empresa())
+                    else None
+                ),
+            ),
             # Agregador que não diz quem contrata: a empresa fica oculta.
             ("agregador.cliente_oculto", lambda: NOME_CONFIDENCIAL if agregador else None),
         ],
         validar=lambda v: (
             "nome de conta/página de carreiras"
             if re.search(r"^(nova pagina|abler|demo\d*|teste)$", normalizar(str(v)).strip())
+            else "texto padrão ou empresa oculta, não é o nome"
+            if str(v) != NOME_CONFIDENCIAL and _nome_generico_ou_oculto(v)
             else "nome da consultoria, não do cliente"
             if (marca := consultoria_de_rh(url_vaga)) and marca in normalizar(str(v))
             else "nome do próprio site (agregador/plataforma), não da empresa"

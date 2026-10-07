@@ -33,7 +33,11 @@ TITULO_DE_LISTAGEM = re.compile(
     r"\b(tem|abre|oferece|anuncia|divulga|disponibiliza)\b.{0,60}\b(vagas|oportunidades)\b"
     r".{0,80}\bconfira\b|\bmais de \d+ vagas\b|\b(tem|abre) (diversas|v[aá]rias|\d+) vagas\b|"
     # Páginas de lista do eu.dev.br: "Vagas com Full-Stack — 300 abertas", "Carreira · ...".
-    r"\b\d+ abertas?\b|^vagas com\b|^carreiras?\s*[·|–-]",
+    r"\b\d+ abertas?\b|^vagas com\b|^carreiras?\s*[·|–-]|"
+    # Busca do oamarelinho ("Encontramos 9 vagas em 5 anúncios..."), cursos e chamadas
+    # de notícia ("Segala's VOLTA A CONTRATAR; Confira!") na prévia de 07/10/2026.
+    r"^encontramos \d+ vagas|\bcursos? (gratuitos?|de qualifica)|\babrem? inscri[cç][oõ]es\b|"
+    r";\s*confira\b|\bconfira[!.]?\s*$",
     re.IGNORECASE,
 )
 CAMINHO_EDITORIAL = re.compile(

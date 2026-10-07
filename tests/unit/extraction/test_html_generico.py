@@ -497,3 +497,15 @@ def test_paginas_de_lista_do_eu_dev_nao_sao_vaga() -> None:
     assert TITULO_DE_LISTAGEM.search("Vagas com Full-Stack — 300 abertas (Remoto e Híbrido)")
     assert TITULO_DE_LISTAGEM.search("Carreira · eu.dev.br")
     assert not TITULO_DE_LISTAGEM.search("Desenvolvedor Back-end · eu.dev.br")
+
+
+def test_busca_curso_e_chamada_de_noticia_nao_sao_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import TITULO_DE_LISTAGEM
+
+    for titulo in (
+        'Encontramos 9 vagas em 5 anúncios relacionadas à busca de "Serralheiro"',
+        "Curso gratuito de Libras abre inscrições com 1.500 vagas mensais em São Paulo",
+        "Segala's Alimentos VOLTA A CONTRATAR; Confira!",
+    ):
+        assert TITULO_DE_LISTAGEM.search(titulo), titulo
+    assert not TITULO_DE_LISTAGEM.search("Auxiliar de Cozinha - Turno Noite")

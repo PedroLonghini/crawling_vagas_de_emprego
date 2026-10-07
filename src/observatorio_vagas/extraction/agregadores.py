@@ -28,7 +28,7 @@ AGREGADORES_CONHECIDOS = (
     "indeed.com", "glassdoor.com", "talent.com", "emploive.com", "melhoresempregos.com",
     "jobbrazil.com", "programathor.com.br", "hubclubgo.com.br", "drjobpro.com",
     "sine.com.br", "empregos.com.br", "eu.dev.br", "adzuna.com.br", "buscarvagas.com.br",
-    "linkedin.com",
+    "linkedin.com", "oamarelinho.com.br",
 )  # fmt: skip
 _SUFIXOS = (".com.br", ".org.br", ".net.br", ".gov.br", ".edu.br", ".com", ".br", ".net", ".org")
 

@@ -552,3 +552,17 @@ def test_cep_do_rodape_de_agregador_nao_vira_cep_da_vaga():
     )
 
     assert "postalCode" not in (leitura.campos.get("location") or {})
+
+
+def test_texto_padrao_na_vaga_vence_o_nome_do_jornal():
+    vaga = {"@type": "JobPosting", "hiringOrganization": {"name": "Empregador"}}
+
+    assert (
+        _ler_empresa("https://amanha.example/vagas/1", vaga, site="Grupo AMANHÃ") == "confidential"
+    )
+
+
+def test_portal_emprega_com_nome_igual_ao_dominio():
+    vaga = {"@type": "JobPosting", "hiringOrganization": {"name": "Emprega São Paulo"}}
+
+    assert _ler_empresa("https://empregasaopaulo.com.br/vaga/1", vaga) == "confidential"

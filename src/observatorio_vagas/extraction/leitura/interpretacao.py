@@ -570,7 +570,7 @@ def _nome_generico_ou_oculto(nome: object) -> bool:
 
 # Nome do site igual ao domínio e com palavra de portal: o site é um portal de vagas
 # ("Empregos Pernambuco" em empregospernambuco.com.br, 2.073 vagas).
-_PALAVRA_DE_PORTAL = re.compile(r"\b(vagas?|empregos?|jobs?|carreiras?)\b|^mais ?vagas")
+_PALAVRA_DE_PORTAL = re.compile(r"\b(vagas?|empreg\w*|jobs?|carreiras?)\b|^mais ?vagas")
 _EMPRESA_CONFIDENCIAL = re.compile(
     r"\b(empresa|cliente|contratante)\s+(confidencial|sigilos[ao])\b", re.IGNORECASE
 )
@@ -825,7 +825,11 @@ def ler_vaga(
     eh_plataforma = plataforma is not None or any(
         (urlsplit(url_vaga).hostname or "").endswith(h) for h in HOSTS_PLATAFORMA
     )
-    nomes_do_site = (inv.meta.get("og:site_name"), _organizacao(documento).get("name"))
+    nomes_do_site = (
+        inv.meta.get("og:site_name"),
+        _organizacao(documento).get("name"),
+        _jsonld(inv, "hiringOrganization", "name"),
+    )
     agregador = e_agregador(url_vaga) or any(
         isinstance(nome, str)
         and nome_e_do_site(nome, url_vaga)
@@ -955,15 +959,8 @@ def ler_vaga(
                     and r[1]
                 ),
             ),
-            (
-                "meta.og:site_name",
-                # Em agregador, o nome do site nunca é a empresa que contrata.
-                lambda: None if eh_plataforma or agregador else inv.meta.get("og:site_name"),
-            ),
-            (
-                "consultoria.cliente_oculto",
-                lambda: NOME_CONFIDENCIAL if consultoria_de_rh(url_vaga) else None,
-            ),
+            # Vem antes do nome do site: amanha.com.br põe "Empregador" na vaga e
+            # "Grupo AMANHÃ" (o jornal) no site; a empresa é oculta, não o jornal.
             # A fonte disse que a empresa é oculta ou pôs um texto padrão no lugar dela
             # ("Empresa confidencial", "Empregador", "Não informado").
             (
@@ -973,6 +970,15 @@ def ler_vaga(
                     if any(_nome_generico_ou_oculto(n) for n in _nomes_brutos_da_empresa())
                     else None
                 ),
+            ),
+            (
+                "meta.og:site_name",
+                # Em agregador, o nome do site nunca é a empresa que contrata.
+                lambda: None if eh_plataforma or agregador else inv.meta.get("og:site_name"),
+            ),
+            (
+                "consultoria.cliente_oculto",
+                lambda: NOME_CONFIDENCIAL if consultoria_de_rh(url_vaga) else None,
             ),
             # Agregador que não diz quem contrata: a empresa fica oculta.
             ("agregador.cliente_oculto", lambda: NOME_CONFIDENCIAL if agregador else None),

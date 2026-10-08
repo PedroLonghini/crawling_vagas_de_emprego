@@ -221,6 +221,35 @@ def test_renderizacao_e_dispensada_quando_html_ja_tem_link_de_vaga(monkeypatch):
     renderizar.assert_not_called()
 
 
+def test_renderizacao_considera_adaptador_especifico_antes_de_abrir_chromium(monkeypatch):
+    crawler = SimpleNamespace(settings=Settings(), stats=Mock())
+    middleware = RenderizacaoJavaScriptMiddleware(crawler)
+    renderizar = Mock()
+    monkeypatch.setattr("observatorio_vagas.crawling.javascript.renderizar_em_thread", renderizar)
+    url = "https://careers.dhl.com/amer/pt/jobs"
+    pedido = Request(
+        url,
+        cb_kwargs={"fonte": "pagina_carreiras"},
+        meta={
+            "observatorio_alvo_id": "dhl",
+            "observatorio_dominio": "careers.dhl.com",
+            "observatorio_status_politica": "somente_coleta",
+            "observatorio_requisicao_autorizada": True,
+            "observatorio_tipo_pagina": "inicial",
+        },
+    )
+    resposta = HtmlResponse(
+        url,
+        request=pedido,
+        body=b'<a href="/amer/pt/job/analista/123">Analista</a>',
+        encoding="utf-8",
+    )
+
+    assert asyncio.run(middleware.process_response(pedido, resposta)) is resposta
+    assert pedido.meta["observatorio_javascript"] == "dispensado_html_estatico"
+    renderizar.assert_not_called()
+
+
 def test_erro_preserva_original(monkeypatch):
     crawler = SimpleNamespace(settings=Settings(), stats=Mock())
     middleware = RenderizacaoJavaScriptMiddleware(crawler)

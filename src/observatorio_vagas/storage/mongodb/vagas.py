@@ -174,6 +174,26 @@ class RepositorioVagasMongoDB:
             VagaCanonica,
         )
 
+    def buscar_por_ids(
+        self,
+        vaga_ids: Sequence[UUID],
+    ) -> dict[UUID, VagaCanonica]:
+        """Procura várias vagas canônicas numa única consulta."""
+
+        if not vaga_ids:
+            return {}
+
+        try:
+            documentos = list(self._colecao.find({"_id": {"$in": list(vaga_ids)}}))
+
+        except PyMongoError as erro_original:
+            raise ErroRepositorioVagasMongoDB(
+                "não foi possível consultar as vagas canônicas"
+            ) from erro_original
+
+        vagas = (documento_para_modelo(documento, VagaCanonica) for documento in documentos)
+        return {vaga.id: vaga for vaga in vagas}
+
     def listar_por_empresa(
         self,
         empresa_id: UUID,

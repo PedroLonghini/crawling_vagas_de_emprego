@@ -1,0 +1,28 @@
+{
+  "entrada": "C:\\Users\\Inspirion\\Documents\\urls_1000.txt",
+  "linhas_com_url": 999,
+  "urls_prontas_para_coleta_e_publicacao": 995,
+  "urls_rejeitadas": 4,
+  "rejeitadas": [
+    {
+      "linha": 308,
+      "url": "https://www.empregos.com.br/vaga/11600205/agente-funerario-em-campo-grande-ms",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 512,
+      "url": "https://www.empregos.com.br/vaga/11603747/analista-de-manutencao-pavimentos-congonhas-em-sao-paulo-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 529,
+      "url": "https://www.empregos.com.br/vaga/11827328/analista-de-tesouraria-senior-em-curitiba-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 540,
+      "url": "https://www.empregos.com.br/vaga/11721291/analista-operacional-de-seguranca-em-recife-pe",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    }
+  ]
+}

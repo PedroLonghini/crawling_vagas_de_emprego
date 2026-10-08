@@ -34,13 +34,13 @@ def test_url_nova_entra_pendente_inativa_e_sem_republicacao() -> None:
 
     resultado = importar_urls(
         [],
-        ["https://empresa-exemplo.gupy.io/"],
+        ["https://empresa-exemplo.com.br/trabalhe-conosco"],
     )
 
     linha = resultado.linhas[0]
 
     assert resultado.adicionadas == 1
-    assert linha["fonte"] == "gupy"
+    assert linha["fonte"] == "pagina_carreiras"
     assert linha["ativa"] == "false"
     assert linha["status_politica"] == "pendente"
     assert linha["republicacao_permitida"] == "false"

@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import hashlib
 import re
+from collections.abc import Iterable
 from typing import Any
 from uuid import UUID, uuid4
 
 from pydantic import Field, field_validator, model_validator
 
+from observatorio_vagas.domain.assinatura_vaga import IdentidadeConteudo, mesma_vaga
 from observatorio_vagas.domain.common import (
     DataHora,
     ModeloDominio,
@@ -34,6 +36,31 @@ def calcular_chave_idempotencia_empregos(
     return hashlib.sha256(texto.encode()).hexdigest()
 
 
+def encontrar_publicacao_da_mesma_vaga(
+    publicadas: Iterable[OperacaoPublicacaoEmpregos],
+    *,
+    identidade: IdentidadeConteudo,
+    external_job_posting_id: str,
+) -> OperacaoPublicacaoEmpregos | None:
+    """Publicação no ar (de outro id) que é a mesma vaga, ou None.
+
+    ``publicadas`` já vem filtrada pela assinatura (começo da descrição); aqui
+    se aplica a regra do mesmo site (descrição inteira igual).
+    """
+
+    for publicada in publicadas:
+        if publicada.external_job_posting_id == external_job_posting_id.strip():
+            continue
+        if mesma_vaga(
+            dominio_a=publicada.dominio_origem,
+            assinatura_completa_a=publicada.assinatura_descricao_completa,
+            dominio_b=identidade.dominio,
+            assinatura_completa_b=identidade.assinatura_completa,
+        ):
+            return publicada
+    return None
+
+
 class OperacaoPublicacaoEmpregos(ModeloDominio):
     """Registro auditável de uma única operação lógica de publicação."""
 
@@ -44,6 +71,12 @@ class OperacaoPublicacaoEmpregos(ModeloDominio):
     operation_type: TextoObrigatorio
     payload_sha256: str
     chave_idempotencia: str | None = None
+    # Mesma vaga vinda de outro site tem outro external_job_posting_id; a
+    # assinatura de conteúdo (domain/assinatura_vaga.py) a reconhece. A
+    # completa e o domínio separam "outro site" de "mesmo site".
+    assinatura_conteudo: str | None = None
+    assinatura_descricao_completa: str | None = None
+    dominio_origem: str | None = None
 
     situacao: SituacaoPublicacaoEmpregos = SituacaoPublicacaoEmpregos.PREPARADA
     tentativas: int = Field(default=0, ge=0)
@@ -63,7 +96,13 @@ class OperacaoPublicacaoEmpregos(ModeloDominio):
 
         return str(valor).strip().upper()
 
-    @field_validator("payload_sha256", "chave_idempotencia", mode="before")
+    @field_validator(
+        "payload_sha256",
+        "chave_idempotencia",
+        "assinatura_conteudo",
+        "assinatura_descricao_completa",
+        mode="before",
+    )
     @classmethod
     def validar_hash(cls, valor: Any) -> str | None:
         """Aceita somente hashes SHA-256 hexadecimais."""

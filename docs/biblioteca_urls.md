@@ -32,8 +32,10 @@ crawler:
 - Toda URL válida entra como página de carreiras, ativa para coleta, com limite
   de dez páginas.
 - O nome e o identificador internos são provisórios e não exigem edição manual.
-- Domínios bloqueados, como Gupy, Indeed, Catho e InfoJobs/Pandapé, são
-  rejeitados sem interromper as outras URLs.
+- Domínios bloqueados (lista vigente em
+  `src/observatorio_vagas/domain/politica_fonte.py`; inclui Gupy, Indeed, Catho,
+  InfoJobs/Pandapé, Vagas.com e empregandobrasil.com.br) são rejeitados sem
+  interromper as outras URLs.
 - A coleta não autoriza publicação. A fonte só pode gerar payload de publicação
   depois da autorização da empresa ser registrada.
 

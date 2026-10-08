@@ -84,9 +84,7 @@ def test_catalogo_simples_isola_url_de_dominio_bloqueado(
 
     resultado = carregar_alvos_csv_tolerante(catalogo)
 
-    assert [alvo.url_inicial for alvo in resultado.alvos] == [
-        "https://empresa.example/carreiras"
-    ]
+    assert [alvo.url_inicial for alvo in resultado.alvos] == ["https://empresa.example/carreiras"]
     assert len(resultado.falhas) == 1
     assert resultado.falhas[0].numero_linha == 3
     assert "Catho" in resultado.falhas[0].mensagem
@@ -228,8 +226,12 @@ def test_start_preserva_contextos_que_usam_a_mesma_url(
 
     catalogo = escrever_catalogo(
         tmp_path,
-        ("empresa_um,Empresa Um,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"),
-        ("empresa_dois,Empresa Dois,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"),
+        (
+            "empresa_um,Empresa Um,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"
+        ),
+        (
+            "empresa_dois,Empresa Dois,outra,https://compartilhada.example/carreiras,true,5,somente_coleta"
+        ),
     )
 
     spider = CatalogoFontesSpider(
@@ -380,6 +382,88 @@ def test_pagina_de_carreiras_consulta_sitemap_dentro_do_mesmo_orcamento(
     assert requisicao_vaga.meta["observatorio_tipo_pagina"] == "detalhe_vaga"
 
 
+def test_quickin_segue_so_o_sitemap_da_propria_empresa(tmp_path: Path) -> None:
+    """O índice do Quickin lista centenas de empresas; só a do alvo é seguida."""
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        (
+            "quickin_1,Empresa Quickin,pagina_carreiras,"
+            "https://jobs.quickin.io/peoplecapitalhumano/jobs,true,30,aprovada"
+        ),
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), usar_cache_incremental=False)
+    inicial = asyncio.run(coletar_requisicoes(spider))[0]
+    resposta_inicial = HtmlResponse(
+        url=inicial.url,
+        request=inicial,
+        status=200,
+        body=CORPO_HTML,
+        encoding="utf-8",
+        headers={b"Content-Type": b"text/html; charset=utf-8"},
+    )
+
+    requisicao_sitemap = next(
+        item
+        for item in spider.parse(resposta_inicial, **inicial.cb_kwargs)
+        if isinstance(item, Request)
+    )
+    assert requisicao_sitemap.url == "https://jobs.quickin.io/sitemap.xml"
+
+    indice = TextResponse(
+        url=requisicao_sitemap.url,
+        request=requisicao_sitemap,
+        status=200,
+        body=b"""
+        <sitemapindex>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/reply-jobs.xml</loc></sitemap>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/gcareers-jobs.xml</loc></sitemap>
+          <sitemap><loc>https://jobs.quickin.io/sitemaps/peoplecapitalhumano-jobs.xml</loc></sitemap>
+        </sitemapindex>
+        """,
+        encoding="utf-8",
+        headers={b"Content-Type": b"application/xml"},
+    )
+    pedidos = [
+        item
+        for item in spider.parse(indice, **requisicao_sitemap.cb_kwargs)
+        if isinstance(item, Request)
+    ]
+
+    assert [pedido.url for pedido in pedidos] == [
+        "https://jobs.quickin.io/sitemaps/peoplecapitalhumano-jobs.xml"
+    ]
+
+
+def test_smartrecruiters_nao_pede_sitemap_da_plataforma(tmp_path: Path) -> None:
+    """Regressão: api.smartrecruiters.com/sitemap.xml era bloqueado a cada coleta."""
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        (
+            "sr_1,Bosch,pagina_carreiras,"
+            "https://jobs.smartrecruiters.com/BoschGroup,true,10,aprovada"
+        ),
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), usar_cache_incremental=False)
+    inicial = asyncio.run(coletar_requisicoes(spider))[0]
+    assert inicial.url.startswith("https://api.smartrecruiters.com/v1/companies/BoschGroup/")
+    resposta = TextResponse(
+        url=inicial.url,
+        request=inicial,
+        status=200,
+        body=b'{"content": [], "totalFound": 0}',
+        encoding="utf-8",
+        headers={b"Content-Type": b"application/json"},
+    )
+
+    pedidos = [
+        item for item in spider.parse(resposta, **inicial.cb_kwargs) if isinstance(item, Request)
+    ]
+
+    assert not any(pedido.url.endswith("/sitemap.xml") for pedido in pedidos)
+
+
 def test_spider_ativa_segunda_barreira() -> None:
     """O spider novo deve ativar o middleware de política."""
 
@@ -418,3 +502,81 @@ def test_spider_informa_catalogo_inexistente(
         CatalogoFontesSpider(
             catalogo=str(caminho),
         )
+
+
+def test_limite_navegacao_vale_100_com_limite_de_anuncios_e_limita_a_primeira_requisicao(
+    tmp_path: Path,
+) -> None:
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,500,aprovada",
+    )
+
+    padrao = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200)
+    sem_limite = CatalogoFontesSpider(catalogo=str(catalogo))
+    manual = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200, limite_navegacao=30)
+    requisicoes = asyncio.run(coletar_requisicoes(manual))
+
+    assert padrao.limite_navegacao == 100
+    assert sem_limite.limite_navegacao is None
+    assert requisicoes[0].meta["observatorio_limite_paginas"] == 30
+
+
+def test_fonte_sem_nenhuma_vaga_nas_primeiras_paginas_e_encerrada(tmp_path: Path) -> None:
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,1,aprovada",
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200)
+
+    for _ in range(19):
+        spider._verificar_fonte_sem_vagas("a", candidatos_na_pagina=0, e_sitemap=False)
+    assert not spider.janela_publicacao.encerrada("a")
+    spider._verificar_fonte_sem_vagas("a", candidatos_na_pagina=0, e_sitemap=False)
+    assert spider.janela_publicacao.encerrada("a")
+
+    for _ in range(3):
+        spider._verificar_fonte_sem_vagas("b", candidatos_na_pagina=0, e_sitemap=True)
+    assert spider.janela_publicacao.encerrada("b")
+
+    spider._verificar_fonte_sem_vagas("c", candidatos_na_pagina=5, e_sitemap=False)
+    for _ in range(40):
+        spider._verificar_fonte_sem_vagas("c", candidatos_na_pagina=0, e_sitemap=False)
+    assert not spider.janela_publicacao.encerrada("c")
+
+
+def test_lista_esgotada_tira_da_fila_so_os_detalhes_seguintes_e_as_paginas_dela(
+    tmp_path: Path,
+) -> None:
+    from scrapy import Request
+
+    from observatorio_vagas.crawling.janela_publicacao import DataPublicacao
+
+    catalogo = escrever_catalogo(
+        tmp_path,
+        "aprovada,Empresa A,outra,https://aprovada.example/carreiras,true,500,aprovada",
+    )
+    spider = CatalogoFontesSpider(catalogo=str(catalogo), limite_anuncios=200, janela_horas=24)
+    spider.detalhes_pendentes["a"] = {
+        "https://aprovada.example/vaga/6": ("L", 6),
+        "https://aprovada.example/vaga/7": ("L", 7),
+        "https://aprovada.example/vaga/9": ("M", 0),
+    }
+    spider.navegacao_pendente["a"] = {
+        "https://aprovada.example/carreiras?p=2": "L",
+        "https://aprovada.example/outra?p=2": "M",
+    }
+    from datetime import UTC, datetime
+
+    velha = DataPublicacao(datetime(2026, 9, 1, tzinfo=UTC), True)
+    for posicao in range(6):
+        spider.janela_publicacao.registrar("a", velha, lista="L", posicao=posicao)
+
+    spider._podar_lista_esgotada("a", "L")
+
+    assert list(spider.detalhes_pendentes["a"]) == ["https://aprovada.example/vaga/9"]
+    assert list(spider.navegacao_pendente["a"]) == ["https://aprovada.example/outra?p=2"]
+
+    pedido = Request("https://aprovada.example/vaga/9")
+    spider._marcar_origem_detalhe(pedido, ("M", 0))
+    assert (pedido.meta["observatorio_lista"], pedido.meta["observatorio_posicao"]) == ("M", 0)

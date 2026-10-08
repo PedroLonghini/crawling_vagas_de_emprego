@@ -57,9 +57,12 @@ def test_mesmo_conteudo_eh_reconhecido_apos_reabrir_cache(tmp_path: Path) -> Non
     )
 
     segunda = EstadoIncrementalLocal(caminho)
-    assert segunda.resposta_inalterada(
-        alvo_id="empresa", url=url, resposta=_resposta(url=url, corpo=b"<h1>Vagas</h1>")
-    ) is True
+    assert (
+        segunda.resposta_inalterada(
+            alvo_id="empresa", url=url, resposta=_resposta(url=url, corpo=b"<h1>Vagas</h1>")
+        )
+        is True
+    )
 
 
 def test_304_reaproveita_registro_anterior(tmp_path: Path) -> None:
@@ -69,9 +72,12 @@ def test_304_reaproveita_registro_anterior(tmp_path: Path) -> None:
         alvo_id="empresa", url=url, resposta=_resposta(url=url, corpo=b"<h1>Vagas</h1>")
     )
 
-    assert estado.resposta_inalterada(
-        alvo_id="empresa", url=url, resposta=_resposta(url=url, corpo=b"", status=304)
-    ) is True
+    assert (
+        estado.resposta_inalterada(
+            alvo_id="empresa", url=url, resposta=_resposta(url=url, corpo=b"", status=304)
+        )
+        is True
+    )
 
 
 def test_detalhe_so_eh_conhecido_depois_de_resposta_com_sucesso(tmp_path: Path) -> None:
@@ -113,11 +119,39 @@ def test_fonte_lenta_e_bem_sucedida_recebe_tolerancia_maior(tmp_path: Path) -> N
 def test_agendamento_so_espaca_fonte_apos_tres_coletas_sem_novidade(tmp_path: Path) -> None:
     estado = EstadoIncrementalLocal(tmp_path / "cache.json")
     hoje = date(2026, 9, 24)
+    # Fonte que já rendeu uma vez segue a escada de 1, 3 e 7 dias.
+    estado.registrar_detalhe_sucesso(alvo_id="sem_vagas", url="https://x.example/vaga/1")
     for _ in range(3):
         estado.registrar_execucao(alvo_id="sem_vagas", detalhes_novos=0, hoje=hoje)
 
     assert estado.deve_coletar_hoje("sem_vagas", hoje=hoje) is False
     assert estado.deve_coletar_hoje("sem_vagas", hoje=date(2026, 9, 27)) is True
+
+
+def test_fonte_que_nunca_rendeu_vai_a_7_dias_e_depois_a_30(tmp_path: Path) -> None:
+    estado = EstadoIncrementalLocal(tmp_path / "cache.json")
+    hoje = date(2026, 9, 24)
+
+    estado.registrar_execucao(alvo_id="nunca", detalhes_novos=0, hoje=hoje)
+    assert not estado.deve_coletar_hoje("nunca", hoje + timedelta(days=6))
+    assert estado.deve_coletar_hoje("nunca", hoje + timedelta(days=7))
+
+    for _ in range(2):
+        estado.registrar_execucao(alvo_id="nunca", detalhes_novos=0, hoje=hoje)
+    assert not estado.deve_coletar_hoje("nunca", hoje + timedelta(days=29))
+    assert estado.deve_coletar_hoje("nunca", hoje + timedelta(days=30))
+
+
+def test_fonte_improdutiva_que_volta_a_render_retorna_a_rotina_diaria(tmp_path: Path) -> None:
+    estado = EstadoIncrementalLocal(tmp_path / "cache.json")
+    hoje = date(2026, 9, 24)
+    for _ in range(3):
+        estado.registrar_execucao(alvo_id="acordou", detalhes_novos=0, hoje=hoje)
+
+    estado.registrar_detalhe_sucesso(alvo_id="acordou", url="https://x.example/vaga/9")
+    estado.registrar_execucao(alvo_id="acordou", detalhes_novos=1, hoje=hoje)
+
+    assert estado.deve_coletar_hoje("acordou", hoje + timedelta(days=1))
 
 
 def test_vaga_nova_mantem_fonte_na_rotina_diaria(tmp_path: Path) -> None:
@@ -150,3 +184,31 @@ def test_vaga_ausente_por_14_dias_vira_candidata_a_revisao(tmp_path: Path) -> No
     assert estado.possiveis_encerradas(
         alvo_id="empresa", hoje=date.today() + timedelta(days=14)
     ) == (url,)
+
+
+def test_fonte_sem_nenhum_link_de_vaga_so_volta_em_sete_dias(tmp_path: Path) -> None:
+    estado = EstadoIncrementalLocal(tmp_path / "cache.json")
+    hoje = date(2026, 10, 5)
+
+    estado.registrar_execucao(alvo_id="vazia", detalhes_novos=0, hoje=hoje, sem_candidatos=True)
+    estado.registrar_detalhe_sucesso(alvo_id="normal", url="https://x.example/vaga/1")
+    estado.registrar_execucao(alvo_id="normal", detalhes_novos=0, hoje=hoje)
+
+    assert not estado.deve_coletar_hoje("vazia", hoje + timedelta(days=6))
+    assert estado.deve_coletar_hoje("vazia", hoje + timedelta(days=7))
+    assert estado.deve_coletar_hoje("normal", hoje + timedelta(days=1))
+
+
+def test_listagem_nao_regrava_o_estado_inteiro_a_cada_resposta(tmp_path: Path) -> None:
+    estado = EstadoIncrementalLocal(tmp_path / "cache.json")
+    gravacoes: list[int] = []
+    original = estado.salvar
+    estado.salvar = lambda: (gravacoes.append(1), original())[1]  # type: ignore[method-assign]
+
+    for n in range(30):
+        url = f"https://empresa.example/vagas?p={n}"
+        estado.resposta_inalterada(
+            alvo_id="a", url=url, resposta=_resposta(url=url, corpo=b"<html>" + str(n).encode())
+        )
+
+    assert len(gravacoes) == 1

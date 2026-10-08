@@ -16,6 +16,7 @@ from observatorio_vagas.domain.enums import (
 from observatorio_vagas.domain.localizacao import localizacao_eh_brasileira
 from observatorio_vagas.domain.politica_fonte import (
     PoliticaFonte,
+    encontrar_restricao_dominio,
 )
 from observatorio_vagas.domain.prontidao import (
     RelatorioProntidao,
@@ -35,6 +36,8 @@ class CodigoBloqueioPublicacao(StrEnum):
     STATUS_NAO_PUBLICAVEL = "status_nao_publicavel"
 
     VAGA_EXPIRADA = "vaga_expirada"
+
+    VAGA_ANTIGA = "vaga_antiga"
 
     LOCALIZACAO_FORA_DO_BRASIL = "localizacao_fora_do_brasil"
 
@@ -170,6 +173,29 @@ def _esta_expirada(
     return expira_em < momento_referencia.date()
 
 
+# Decisão do usuário (07/10/2026): só vagas publicadas na fonte há até 30 dias
+# seguem para o Empregos. Sem data de publicação a vaga continua elegível; a
+# conferência de vagas removidas tira do ar as que sumirem da origem.
+IDADE_MAXIMA_PUBLICACAO_DIAS = 30
+
+
+def _publicada_ha_mais_de_limite(
+    publicado_em: date | datetime | None,
+    *,
+    momento_referencia: datetime,
+) -> bool:
+    """Compara só os dias, com datas sem fuso lidas como UTC."""
+
+    if publicado_em is None:
+        return False
+    if isinstance(publicado_em, datetime):
+        data_hora = publicado_em
+        if data_hora.tzinfo is None:
+            data_hora = data_hora.replace(tzinfo=UTC)
+        publicado_em = data_hora.astimezone(momento_referencia.tzinfo).date()
+    return (momento_referencia.date() - publicado_em).days > IDADE_MAXIMA_PUBLICACAO_DIAS
+
+
 def _esta_no_brasil(anuncio: AnuncioVaga, vaga: VagaCanonica) -> bool:
     """Exige país Brasil e endereço que confirme a localização.
 
@@ -220,6 +246,37 @@ def avaliar_elegibilidade_publicacao(
             )
         )
 
+    # Domínio na lista de restrições (fonte não autorizada): nem anúncio antigo,
+    # gravado antes da restrição, pode ser publicado.
+    restricao = encontrar_restricao_dominio(
+        (urlsplit(str(anuncio.url)).hostname or "").removeprefix("www.")
+    )
+    if restricao is not None:
+        bloqueios.append(
+            BloqueioPublicacao(
+                codigo=(CodigoBloqueioPublicacao.FONTE_SEM_PERMISSAO),
+                mensagem=f"Fonte não autorizada ({restricao.nome}): {restricao.motivo}.",
+            )
+        )
+
+    # Blacklist indireta (decisão do usuário, 07/10/2026): agregador que manda o
+    # candidato para um domínio bloqueado (Gupy, Vagas.com, Indeed...) está
+    # republicando uma vaga daquele domínio, e ela também não pode seguir.
+    if anuncio.url_candidatura is not None and restricao is None:
+        restricao_candidatura = encontrar_restricao_dominio(
+            (urlsplit(str(anuncio.url_candidatura)).hostname or "").removeprefix("www.")
+        )
+        if restricao_candidatura is not None:
+            bloqueios.append(
+                BloqueioPublicacao(
+                    codigo=(CodigoBloqueioPublicacao.FONTE_SEM_PERMISSAO),
+                    mensagem=(
+                        "A candidatura leva a uma fonte não autorizada "
+                        f"({restricao_candidatura.nome}): {restricao_candidatura.motivo}."
+                    ),
+                )
+            )
+
     # Uma fonte pode permitir coleta para análise,
     # mas proibir republicação.
     if not politica_fonte.permite_publicacao:
@@ -262,9 +319,7 @@ def avaliar_elegibilidade_publicacao(
             BloqueioPublicacao(
                 codigo=(CodigoBloqueioPublicacao.LOCALIZACAO_FORA_DO_BRASIL),
                 campo="location.address",
-                mensagem=(
-                    "A vaga está localizada fora do Brasil e não pode ser publicada."
-                ),
+                mensagem=("A vaga está localizada fora do Brasil e não pode ser publicada."),
             )
         )
 
@@ -280,6 +335,19 @@ def avaliar_elegibilidade_publicacao(
             BloqueioPublicacao(
                 codigo=(CodigoBloqueioPublicacao.VAGA_EXPIRADA),
                 mensagem=("A data de expiração da vaga já passou."),
+            )
+        )
+
+    if _publicada_ha_mais_de_limite(
+        anuncio.publicado_em,
+        momento_referencia=referencia,
+    ):
+        bloqueios.append(
+            BloqueioPublicacao(
+                codigo=(CodigoBloqueioPublicacao.VAGA_ANTIGA),
+                mensagem=(
+                    f"A vaga foi publicada na fonte há mais de {IDADE_MAXIMA_PUBLICACAO_DIAS} dias."
+                ),
             )
         )
 

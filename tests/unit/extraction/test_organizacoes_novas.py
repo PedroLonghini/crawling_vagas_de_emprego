@@ -4,13 +4,13 @@ import pytest
 from scrapy.http import HtmlResponse
 
 from observatorio_vagas.crawling.adaptadores.generico import AdaptadorGenericoHTML
+from observatorio_vagas.extraction.carreiras_empresas import extrair_vagas_carreiras_empresas
 from observatorio_vagas.extraction.organizacoes import (
     extrair_vagas_carreiras_estaticas,
     extrair_vagas_jobconvo,
     extrair_vagas_organizacoes,
     extrair_vagas_teleperformance,
 )
-from observatorio_vagas.extraction.carreiras_empresas import extrair_vagas_carreiras_empresas
 
 
 def test_extrai_cards_publicos_da_viatec_com_url_de_candidatura():

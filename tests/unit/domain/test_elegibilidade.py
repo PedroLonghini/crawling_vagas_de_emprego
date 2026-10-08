@@ -241,6 +241,56 @@ def test_vaga_expirada_bloqueia() -> None:
     assert CodigoBloqueioPublicacao.VAGA_EXPIRADA in codigos(resultado)
 
 
+def test_candidatura_em_dominio_bloqueado_bloqueia() -> None:
+    """Blacklist indireta: agregador que leva à Gupy ou ao Vagas.com não passa."""
+
+    def avaliar(url_candidatura):
+        anuncio, vaga, relatorio = criar_cenario()
+        anuncio = anuncio.model_copy(update={"url_candidatura": url_candidatura})
+        return avaliar_elegibilidade_publicacao(
+            anuncio=anuncio,
+            vaga=vaga,
+            politica_fonte=politica(),
+            relatorio_prontidao=relatorio,
+            momento_referencia=AGORA,
+        )
+
+    for bloqueada in (
+        "https://empresa.gupy.io/jobs/123",
+        "https://www.vagas.com.br/vagas/v2826231?fnt=19",
+    ):
+        resultado = avaliar(bloqueada)
+        assert CodigoBloqueioPublicacao.FONTE_SEM_PERMISSAO in codigos(resultado)
+        assert any("candidatura" in b.mensagem for b in resultado.bloqueios)
+
+    for permitida in ("https://empresa.solides.jobs/vaga/1", None):
+        assert CodigoBloqueioPublicacao.FONTE_SEM_PERMISSAO not in codigos(avaliar(permitida))
+
+
+def test_vaga_publicada_ha_mais_de_30_dias_bloqueia() -> None:
+    """Regra de idade: só vagas publicadas na fonte há até 30 dias."""
+
+    def avaliar(publicado_em):
+        anuncio, vaga, relatorio = criar_cenario()
+        anuncio = anuncio.model_copy(update={"publicado_em": publicado_em})
+        return codigos(
+            avaliar_elegibilidade_publicacao(
+                anuncio=anuncio,
+                vaga=vaga,
+                politica_fonte=politica(),
+                relatorio_prontidao=relatorio,
+                momento_referencia=AGORA,
+            )
+        )
+
+    assert CodigoBloqueioPublicacao.VAGA_ANTIGA in avaliar(date(2026, 7, 25))
+    assert CodigoBloqueioPublicacao.VAGA_ANTIGA in avaliar(AGORA - timedelta(days=31))
+    assert CodigoBloqueioPublicacao.VAGA_ANTIGA not in avaliar(date(2026, 7, 26))
+    assert CodigoBloqueioPublicacao.VAGA_ANTIGA not in avaliar(AGORA - timedelta(days=2))
+    # Sem data de publicação: decisão do usuário é manter elegível.
+    assert CodigoBloqueioPublicacao.VAGA_ANTIGA not in avaliar(None)
+
+
 def test_url_de_candidatura_ausente_usa_url_da_fonte() -> None:
     """A URL da vaga supre a ausência de link direto de candidatura."""
 

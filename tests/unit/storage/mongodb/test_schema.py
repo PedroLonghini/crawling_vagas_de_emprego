@@ -123,3 +123,15 @@ def test_preparar_banco_envia_indices_para_cada_colecao() -> None:
 
         assert len(colecao.indices_recebidos) == len(indices_esperados)
         assert len(resultado[nome_colecao]) == len(indices_esperados)
+
+
+def test_anuncios_tem_indice_por_alvo_e_data_de_observacao() -> None:
+    """O pós-processamento lista os anúncios de cada alvo por período."""
+
+    indice = next(
+        i.document
+        for i in INDICES_POR_COLECAO[COLECAO_ANUNCIOS]
+        if i.document["name"] == "ix_anuncios_alvo_observacao"
+    )
+
+    assert list(indice["key"].items()) == [("alvo_id", 1), ("ultima_observacao_em", -1)]

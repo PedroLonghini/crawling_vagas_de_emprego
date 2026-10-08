@@ -147,6 +147,16 @@ class CursorAnunciosFalso:
         return iter(self.documentos)
 
 
+def _corresponde(atual: object, esperado: object) -> bool:
+    """Igualdade simples, ou os operadores $ne/$nin usados na troca de status."""
+
+    if isinstance(esperado, dict) and "$ne" in esperado:
+        return atual != esperado["$ne"]
+    if isinstance(esperado, dict) and "$nin" in esperado:
+        return atual not in esperado["$nin"]
+    return atual == esperado
+
+
 class ColecaoAnunciosFalsa:
     """Simula somente as operações utilizadas pelo repositório."""
 
@@ -218,10 +228,26 @@ class ColecaoAnunciosFalsa:
             # O $setOnInsert não pode ser aplicado em atualizações.
             self.documentos[anuncio_id].update(atualizacao["$set"])
             for campo, valor in atualizacao.get("$max", {}).items():
-                if self.documentos[anuncio_id].get(campo) is None or valor > self.documentos[anuncio_id][campo]:
+                if (
+                    self.documentos[anuncio_id].get(campo) is None
+                    or valor > self.documentos[anuncio_id][campo]
+                ):
                     self.documentos[anuncio_id][campo] = valor
 
         return dict(self.documentos[anuncio_id])
+
+    def update_one(
+        self,
+        filtro: dict[str, object],
+        atualizacao: dict[str, dict[str, Any]],
+    ) -> ResultadoBulkFalso:
+        """Troca de status condicional (aceita $ne e $nin no filtro)."""
+
+        for documento in self.documentos.values():
+            if all(_corresponde(documento.get(campo), valor) for campo, valor in filtro.items()):
+                documento.update(atualizacao["$set"])
+                return ResultadoBulkFalso(upserted_count=0, modified_count=1)
+        return ResultadoBulkFalso(upserted_count=0, modified_count=0)
 
     def find_one(
         self,
@@ -409,6 +435,36 @@ def test_salvar_e_atualizar_preserva_identidade() -> None:
     )
 
 
+@pytest.mark.parametrize("protegido", [StatusAnuncio.ENCERRADO, StatusAnuncio.AUSENTE])
+def test_nova_leitura_nao_desfaz_status_da_conferencia(protegido) -> None:
+    """Vaga encerrada (ou aguardando confirmação) não volta à fila ao ser relida."""
+
+    colecao = ColecaoAnunciosFalsa()
+    repositorio = RepositorioAnunciosMongoDB(BancoFalso(colecao))
+    salvo = repositorio.salvar(criar_anuncio())
+    colecao.documentos[salvo.id]["status"] = protegido.value
+
+    relido = repositorio.salvar(criar_anuncio(hash_conteudo="b" * 64))
+
+    assert relido.status is protegido
+    assert relido.hash_conteudo == "b" * 64
+
+
+def test_encerrar_e_trocar_status_comum_continuam_permitidos() -> None:
+    colecao = ColecaoAnunciosFalsa()
+    repositorio = RepositorioAnunciosMongoDB(BancoFalso(colecao))
+    salvo = repositorio.salvar(criar_anuncio())
+    colecao.documentos[salvo.id]["status"] = StatusAnuncio.AUSENTE.value
+
+    encerrado = repositorio.salvar(
+        criar_anuncio().model_copy(update={"status": StatusAnuncio.ENCERRADO})
+    )
+    assert encerrado.status is StatusAnuncio.ENCERRADO
+
+    colecao.documentos[salvo.id]["status"] = StatusAnuncio.DESCOBERTO.value
+    assert repositorio.salvar(criar_anuncio()).status is StatusAnuncio.ATIVO
+
+
 def test_listar_recentes_sem_fonte_retorna_todos() -> None:
     """Sem filtro, anúncios de todas as fontes devem aparecer."""
 
@@ -488,9 +544,9 @@ def test_salvar_lote_classifica_resultados() -> None:
     assert resultado.atualizados == 1
     assert resultado.inalterados == 2
 
-    # Todos os anúncios foram enviados
-    # em uma única chamada ao MongoDB.
-    assert colecao.quantidade_chamadas_bulk == 1
+    # Todos os anúncios foram enviados numa chamada; a segunda chamada só
+    # troca status (respeitando os status protegidos).
+    assert colecao.quantidade_chamadas_bulk == 2
     assert colecao.quantidade_operacoes_bulk == 5
 
     # ordered=False permite continuar o lote
@@ -581,4 +637,45 @@ def test_listar_recentes_filtra_por_fonte() -> None:
     assert [anuncio.id_externo for anuncio in encontrados] == [
         "gupy-recente",
         "gupy-antigo",
+    ]
+
+
+def test_listar_por_alvo_filtra_o_periodo_no_proprio_mongodb() -> None:
+    from datetime import UTC, datetime
+
+    class CursorCapturador:
+        def sort(self, *_: object) -> CursorCapturador:
+            return self
+
+        def limit(self, *_: object) -> CursorCapturador:
+            return self
+
+        def allow_disk_use(self, *_: object) -> CursorCapturador:
+            return self
+
+        def __iter__(self):
+            return iter(())
+
+    class ColecaoCapturadora:
+        filtros: list[dict[str, object]] = []
+
+        def find(self, filtro: dict[str, object]) -> CursorCapturador:
+            self.filtros.append(filtro)
+            return CursorCapturador()
+
+    class BancoCapturador:
+        colecao = ColecaoCapturadora()
+
+        def __getitem__(self, _: str) -> ColecaoCapturadora:
+            return self.colecao
+
+    repositorio = RepositorioAnunciosMongoDB(BancoCapturador())  # type: ignore[arg-type]
+    desde = datetime(2026, 10, 2, tzinfo=UTC)
+
+    repositorio.listar_por_alvo("alvo_a", limite=50, observados_desde=desde)
+    repositorio.listar_por_alvo("alvo_b")
+
+    assert ColecaoCapturadora.filtros == [
+        {"alvo_id": "alvo_a", "ultima_observacao_em": {"$gte": desde}},
+        {"alvo_id": "alvo_b"},
     ]

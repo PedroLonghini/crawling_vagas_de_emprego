@@ -87,6 +87,19 @@ def test_requisicao_inicial_recebe_numero_e_tipo() -> None:
     assert meta["observatorio_tipo_pagina"] == "inicial"
 
 
+def test_requisicao_workday_publica_usa_post_com_paginacao() -> None:
+    from observatorio_vagas.crawling.request_factory import _configuracao_requisicao_especial
+
+    metodo, corpo, cabecalhos = _configuracao_requisicao_especial(
+        "https://alliancewd.wd3.myworkdayjobs.com/wday/cxs/alliancewd/"
+        "renault-group-careers/jobs?limit=20&offset=40"
+    )
+
+    assert metodo == "POST"
+    assert corpo == b'{"appliedFacets": {}, "limit": 20, "offset": 40, "searchText": ""}'
+    assert cabecalhos["Content-Type"] == "application/json"
+
+
 def test_detalhes_respeitam_dominio_deduplicacao_e_limite() -> None:
     """Somente detalhes seguros devem virar requisições."""
 

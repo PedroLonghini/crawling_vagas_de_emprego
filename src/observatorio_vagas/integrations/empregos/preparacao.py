@@ -31,6 +31,7 @@ from observatorio_vagas.domain.prontidao import (
 )
 from observatorio_vagas.domain.recrutador import Recrutador
 from observatorio_vagas.domain.vaga import VagaCanonica
+from observatorio_vagas.extraction.leitura.aplicacao import aplicar_leitura
 from observatorio_vagas.integrations.empregos.payload import (
     gerar_payload_empregos,
 )
@@ -104,6 +105,9 @@ class ResultadoPreparacaoEmpregos:
     # atribuição. Fica exposto para diagnóstico e auditoria.
     credito_fonte: str | None = None
 
+    # Diagnóstico da leitura completa. Não faz parte do payload da API.
+    diagnostico_leitura: dict[str, Any] | None = None
+
     # Evidência da política e URL usadas nesta preparação.
     proveniencia_fonte: ProvenienciaFontePublicacao | None = None
 
@@ -162,6 +166,12 @@ def preparar_publicacao_empregos(
     bloquear_se_incompleta: bool = False,
 ) -> ResultadoPreparacaoEmpregos:
     """Avalia todos os campos e regras antes de liberar o payload."""
+
+    # Valores da leitura completa (quando o anúncio a tiver) entram nos
+    # modelos antes da prontidão, que continua validando tudo.
+    empresa, anuncio, vaga, diagnostico_leitura = aplicar_leitura(
+        empresa=empresa, anuncio=anuncio, vaga=vaga
+    )
 
     # Primeira etapa: avaliar os 24 campos da API.
     relatorio = avaliar_prontidao_empregos(
@@ -225,6 +235,7 @@ def preparar_publicacao_empregos(
             payload=None,
             credito_fonte=credito_fonte,
             proveniencia_fonte=proveniencia_fonte,
+            diagnostico_leitura=diagnostico_leitura,
         )
 
     # Só chegamos aqui se os campos e as regras forem aprovados.
@@ -246,4 +257,5 @@ def preparar_publicacao_empregos(
         payload=payload,
         credito_fonte=credito_fonte,
         proveniencia_fonte=proveniencia_fonte,
+        diagnostico_leitura=diagnostico_leitura,
     )

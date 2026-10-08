@@ -15,6 +15,7 @@ Sua responsabilidade é somente:
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 from observatorio_vagas.domain.prontidao import (
@@ -217,6 +218,28 @@ def _incluir_campo(
     return campo.preenchido and not _valor_ausente(campo.valor)
 
 
+# A API do Empregos exige company.nationalRegister. Combinado com o responsável
+# pela integração em 2026-10-02, todas as vagas seguem com o CNPJ zerado.
+CNPJ_ZERADO = "00.000.000/0000-00"
+
+# Escrita que o JSON de republicação usa quando a fonte esconde o nome da empresa:
+# "confidential", com c minúsculo (confirmado pelo usuário em 05/10/2026).
+NOME_EMPRESA_CONFIDENCIAL = "confidential"
+# "Confidencial", "Empresa confidencial", "Empresa Sigilosa"... -> "confidential".
+_NOME_OCULTO = re.compile(r"^(empresa |cliente )?(confidencial|confidential|sigilos[ao])$")
+
+
+def _ajustar_para_a_api(payload: dict[str, Any]) -> None:
+    """Aplica as regras da API que não vêm da fonte: CNPJ zerado e 'confidential'."""
+
+    empresa = payload.setdefault("company", {})
+    empresa["nationalRegister"] = CNPJ_ZERADO
+
+    nome = empresa.get("name")
+    if isinstance(nome, str) and _NOME_OCULTO.match(" ".join(nome.casefold().split()).strip(" .")):
+        empresa["name"] = NOME_EMPRESA_CONFIDENCIAL
+
+
 def gerar_payload_empregos(
     relatorio: RelatorioProntidao,
 ) -> dict[str, Any]:
@@ -246,6 +269,8 @@ def gerar_payload_empregos(
             caminho=campo.campo,
             valor=campo.valor,
         )
+
+    _ajustar_para_a_api(payload)
 
     return payload
 

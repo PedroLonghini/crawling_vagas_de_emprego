@@ -1,6 +1,7 @@
 """Criação segura das requisições utilizadas pelo crawler."""
 
 import json
+import re
 from collections.abc import Callable, Iterable
 from datetime import date, timedelta
 from typing import Any
@@ -18,6 +19,7 @@ from scrapy.http import Response
 
 from observatorio_vagas.crawling.catalog import AlvoColeta
 from observatorio_vagas.crawling.filtro_conteudo import eh_conteudo_nao_empregaticio
+from observatorio_vagas.crawling.plataformas import aceita_json, host_companheiro_permitido
 from observatorio_vagas.crawling.urls import normalizar_url_vaga
 from observatorio_vagas.domain.enums import Fonte, StatusPoliticaFonte
 from observatorio_vagas.domain.politica_fonte import encontrar_restricao_dominio
@@ -34,13 +36,10 @@ STATUS_COLETA_PERMITIDOS = frozenset(
     }
 )
 
-DOMINIO_API_SOLIDES = "apigw.solides.com.br"
-SUFIXO_PORTAL_SOLIDES = ".vagas.solides.com.br"
 DOMINIO_SENIOR = "platform.senior.com.br"
-DOMINIO_ABLER = "ats.abler.com.br"
-DOMINIO_API_ABLER = "hulk-smash.abler.com.br"
 DOMINIO_SMARTRECRUITERS = "jobs.smartrecruiters.com"
 DOMINIO_API_SMARTRECRUITERS = "api.smartrecruiters.com"
+SUFIXO_WORKDAY = ".myworkdayjobs.com"
 AGENTE_USUARIO_LULLY = "Mozilla/5.0 (compatible; ObservatorioVagas/1.0; +https://empregos.com.br)"
 
 
@@ -356,26 +355,19 @@ def criar_requisicoes_detalhe(
 
 
 def _eh_api_publica_companheira(*, dominio_origem: str, dominio_destino: str) -> bool:
-    """Permite somente as APIs públicas que abastecem a página autorizada."""
+    """Permite somente os hosts externos cadastrados em ``plataformas.toml``."""
 
-    return (
-        dominio_destino == DOMINIO_API_SOLIDES and dominio_origem.endswith(SUFIXO_PORTAL_SOLIDES)
-    ) or (dominio_origem == DOMINIO_ABLER and dominio_destino == DOMINIO_API_ABLER) or (
-        dominio_origem == DOMINIO_SMARTRECRUITERS
-        and dominio_destino == DOMINIO_API_SMARTRECRUITERS
+    return host_companheiro_permitido(
+        dominio_origem=dominio_origem,
+        dominio_destino=dominio_destino,
     )
 
 
 def _cabecalhos_especificos(url: str) -> dict[str, str]:
-    """Fornece o agente identificado exigido pelo WAF público da Lully."""
+    """Pede JSON às APIs cadastradas e identifica o agente exigido pela Lully."""
 
     dominio = (urlsplit(url).hostname or "").casefold()
-    if dominio in {
-        DOMINIO_API_SOLIDES,
-        DOMINIO_SENIOR,
-        DOMINIO_API_ABLER,
-        DOMINIO_API_SMARTRECRUITERS,
-    }:
+    if aceita_json(dominio):
         return {"Accept": "application/json, text/plain;q=0.9, */*;q=0.8"}
     if dominio in {"lullyhair.com.br", "www.lullyhair.com.br"}:
         return {"User-Agent": AGENTE_USUARIO_LULLY}
@@ -383,11 +375,34 @@ def _cabecalhos_especificos(url: str) -> dict[str, str]:
 
 
 def _configuracao_requisicao_especial(url: str) -> tuple[str, bytes | None, dict[str, str]]:
-    """Cria POSTs apenas para as consultas públicas documentadas do Senior."""
+    """Cria POSTs apenas para as consultas públicas Senior e Workday."""
 
     endereco = urlsplit(url)
     parametros = dict(parse_qsl(endereco.query, keep_blank_values=True))
     cabecalhos = _cabecalhos_especificos(url)
+    if (
+        (endereco.hostname or "").casefold().endswith(SUFIXO_WORKDAY)
+        and re.fullmatch(r"/wday/cxs/[^/]+/[^/]+/jobs", endereco.path)
+    ):
+        try:
+            limite = int(parametros.get("limit", "20"))
+            deslocamento = int(parametros.get("offset", "0"))
+        except ValueError:
+            return "GET", None, cabecalhos
+        if limite < 1 or deslocamento < 0:
+            return "GET", None, cabecalhos
+        return (
+            "POST",
+            json.dumps(
+                {
+                    "appliedFacets": {},
+                    "limit": limite,
+                    "offset": deslocamento,
+                    "searchText": "",
+                }
+            ).encode("utf-8"),
+            {**cabecalhos, "Content-Type": "application/json"},
+        )
     if endereco.hostname != DOMINIO_SENIOR:
         return "GET", None, cabecalhos
     tenant = parametros.get("tenant", "")

@@ -107,6 +107,13 @@ INDICES_POR_COLECAO: dict[str, tuple[IndexModel, ...]] = {
             ],
             name="ix_anuncios_empresa_status_observacao",
         ),
+        # O pós-processamento do lote lista os anúncios de cada alvo pelo
+        # período da coleta. Sem este índice cada alvo varria a coleção inteira
+        # (342 MB, ~0,4 s por consulta no teste de 10 mil fontes).
+        IndexModel(
+            [("alvo_id", ASCENDING), ("ultima_observacao_em", DESCENDING)],
+            name="ix_anuncios_alvo_observacao",
+        ),
         # Permite localizar anúncios que possuem exatamente
         # o mesmo conteúdo calculado pelo SHA-256.
         IndexModel(
@@ -239,6 +246,14 @@ INDICES_POR_COLECAO: dict[str, tuple[IndexModel, ...]] = {
                 ("atualizado_em", DESCENDING),
             ],
             name="ix_publicacoes_empregos_situacao_atualizacao",
+        ),
+        # Mesma vaga vinda de outro site: consultada antes de cada publicação.
+        IndexModel(
+            [
+                ("assinatura_conteudo", ASCENDING),
+                ("situacao", ASCENDING),
+            ],
+            name="ix_publicacoes_empregos_assinatura",
         ),
     ),
 }

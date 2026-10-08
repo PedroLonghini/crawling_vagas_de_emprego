@@ -69,6 +69,7 @@ def resumir_painel(fontes: dict[str, dict[str, Any]], *, dia: date, meta: int) -
 
     linhas = []
     totais: Counter[str] = Counter()
+    diagnosticos: Counter[str] = Counter()
     for alvo_id, fonte in sorted(fontes.items()):
         linha = {chave: _numero(fonte.get(chave)) for chave in CHAVES_SOMAVEIS}
         erros = fonte.get("erros", {})
@@ -82,6 +83,10 @@ def resumir_painel(fontes: dict[str, dict[str, Any]], *, dia: date, meta: int) -
                     else "normal"
                 ),
                 "arquivo_cobertura": fonte["arquivo_cobertura"],
+                "diagnostico": fonte.get("diagnostico", "relatorio_antigo_sem_diagnostico"),
+                "proxima_acao": fonte.get(
+                    "proxima_acao", "Reexecute com a versão atual para obter diagnóstico."
+                ),
                 "erros_download": len(erros) if isinstance(erros, dict) else 0,
                 "detalhes_sem_resposta": len(pendentes) if isinstance(pendentes, list) else 0,
                 "taxa_http_detalhes": (
@@ -96,6 +101,7 @@ def resumir_painel(fontes: dict[str, dict[str, Any]], *, dia: date, meta: int) -
         totais.update({chave: linha[chave] for chave in CHAVES_SOMAVEIS})
         totais["erros_download"] += linha["erros_download"]
         totais["detalhes_sem_resposta"] += linha["detalhes_sem_resposta"]
+        diagnosticos[linha["diagnostico"]] += 1
         linhas.append(linha)
 
     confirmacao = (
@@ -116,6 +122,7 @@ def resumir_painel(fontes: dict[str, dict[str, Any]], *, dia: date, meta: int) -
             **{chave: totais[chave] for chave in CHAVES_SOMAVEIS},
             "erros_download": totais["erros_download"],
             "detalhes_sem_resposta": totais["detalhes_sem_resposta"],
+            "fontes_por_diagnostico": dict(sorted(diagnosticos.items())),
             "taxa_http_detalhes": confirmacao,
             "anuncios_extraidos": None,
             "anuncios_elegiveis": None,
@@ -143,16 +150,24 @@ def painel_markdown(painel: dict[str, Any]) -> str:
         f"- Taxa de confirmação dos detalhes: {totais['taxa_http_detalhes'] or 'n/d'}%",
         f"- Erros de download: {totais['erros_download']}",
         "",
-        "## Por fonte",
+        "## Diagnósticos e próxima ação",
         "",
-        "| Fonte | Fila | Candidatos | Detalhes HTTP OK | Taxa HTTP | Erros |",
-        "| --- | --- | ---: | ---: | ---: | ---: |",
     ]
+    for diagnostico, quantidade in totais["fontes_por_diagnostico"].items():
+        linhas.append(f"- {diagnostico}: {quantidade}")
+    linhas.extend(
+        [
+            "",
+            "## Por fonte",
+            "",
+            "| Fonte | Diagnóstico | Próxima ação | Candidatos | Detalhes HTTP OK | Erros |",
+            "| --- | --- | --- | ---: | ---: | ---: |",
+        ]
+    )
     for fonte in painel["fontes"]:
-        taxa = fonte["taxa_http_detalhes"]
         linhas.append(
-            f"| {fonte['alvo_id']} | {fonte['fila']} | {fonte['candidatos_unicos']} | "
-            f"{fonte['detalhes_http_ok']} | {f'{taxa}%' if taxa is not None else 'n/d'} | "
+            f"| {fonte['alvo_id']} | {fonte['diagnostico']} | {fonte['proxima_acao']} | "
+            f"{fonte['candidatos_unicos']} | {fonte['detalhes_http_ok']} | "
             f"{fonte['erros_download']} |"
         )
     return "\n".join(linhas) + "\n"

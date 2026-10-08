@@ -101,7 +101,7 @@ def test_converte_campos_principais() -> None:
 
     assert vaga.titulo_normalizado == "Senior Science Technician"
 
-    assert vaga.descricao_normalizada == ("Apoiar o laboratório. Organizar materiais.")
+    assert vaga.descricao_normalizada == ("Apoiar o laboratório.\n\nOrganizar materiais.")
 
     assert vaga.cidade == "London"
     assert vaga.estado == "England"
@@ -295,3 +295,38 @@ def test_normaliza_modalidade_e_senioridade_da_gupy() -> None:
 
     assert vaga.modalidade is ModalidadeTrabalho.REMOTO
     assert vaga.senioridade is Senioridade.PLENO
+
+
+def test_descricao_preserva_paragrafos_listas_e_quebras() -> None:
+    """HTML da descrição deve virar texto com parágrafos e itens."""
+
+    anuncio = criar_anuncio().model_copy(
+        update={
+            "descricao_original": (
+                "<style>.x{color:red}</style>"
+                "<h2>Sobre a vaga</h2><p>Atuar no   laboratório.<br>Turno diurno.</p>"
+                "<ul><li>Organizar materiais</li><li>Preparar&nbsp;equipamentos</li></ul>"
+                "<script>alert(1)</script>"
+            ),
+        },
+    )
+
+    vaga = converter_anuncio_em_vaga_canonica(anuncio)
+
+    assert vaga.descricao_normalizada == (
+        "Sobre a vaga\n\n"
+        "Atuar no laboratório.\nTurno diurno.\n\n"
+        "- Organizar materiais\n- Preparar equipamentos"
+    )
+
+
+def test_descricao_texto_puro_mantem_quebras_de_linha() -> None:
+    """Descrições já em texto puro não devem perder parágrafos."""
+
+    anuncio = criar_anuncio().model_copy(
+        update={"descricao_original": "Primeiro parágrafo.\n\n\n\nSegundo   parágrafo."},
+    )
+
+    vaga = converter_anuncio_em_vaga_canonica(anuncio)
+
+    assert vaga.descricao_normalizada == "Primeiro parágrafo.\n\nSegundo parágrafo."

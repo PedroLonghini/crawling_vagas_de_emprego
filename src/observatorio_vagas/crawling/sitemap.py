@@ -1,7 +1,10 @@
 """Descoberta limitada de detalhes de vagas em sitemaps públicos."""
 
+import re
 from urllib.parse import urldefrag, urljoin, urlsplit, urlunsplit
 
+from lxml import etree
+from scrapy.exceptions import NotSupported
 from scrapy.http import Response, TextResponse
 
 SEGMENTOS_VAGA = frozenset(
@@ -20,6 +23,22 @@ SEGMENTOS_VAGA = frozenset(
         "vagas",
     }
 )
+
+
+# Um sitemap menor que isto não tem nenhuma URL (o teste de 10 mil fontes baixou
+# 15 mil sitemaps vazios).
+TAMANHO_MINIMO_SITEMAP = 100
+
+# Sub-sitemaps com nome de vaga/carreira. Lojas e blogs têm sitemap-produtos,
+# sitemap-posts, sitemap-news, sitemap-images: 95% dos 93 mil sitemaps do teste
+# anterior não tinham nenhuma URL útil.
+NOME_DE_SITEMAP_DE_VAGAS = re.compile(
+    r"vaga|job|carreira|career|trabalh|oportunidad|emprego|opening|position|talent|recrut|hiring",
+    re.IGNORECASE,
+)
+# Se nenhum nome indicar vagas, seguimos só os primeiros; e nunca mais que o teto.
+SITEMAPS_SEM_PISTA = 2
+MAXIMO_SUBSITEMAPS = 5
 
 
 def criar_url_sitemap_padrao(resposta: Response) -> str:
@@ -72,11 +91,19 @@ def descobrir_urls_sitemap(resposta: Response) -> tuple[str, ...]:
     if not isinstance(resposta, TextResponse) or not eh_resposta_sitemap(resposta):
         return ()
 
+    if len(resposta.body) < TAMANHO_MINIMO_SITEMAP:
+        return ()
+
     origem = (urlsplit(resposta.url).hostname or "").casefold()
     encontrados: list[str] = []
     urls_encontradas: set[str] = set()
 
-    for valor in resposta.xpath("//*[local-name()='loc']/text()").getall():
+    try:
+        locais = resposta.xpath("//*[local-name()='loc']/text()").getall()
+    except (etree.LxmlError, NotSupported, ValueError):
+        return ()
+
+    for valor in locais:
         if not isinstance(valor, str) or not valor.strip():
             continue
 
@@ -98,7 +125,17 @@ def descobrir_urls_sitemap(resposta: Response) -> tuple[str, ...]:
         urls_encontradas.add(url)
         encontrados.append(url)
 
-    return tuple(encontrados)
+    return _limitar_subsitemaps(tuple(encontrados))
+
+
+def _limitar_subsitemaps(urls: tuple[str, ...]) -> tuple[str, ...]:
+    """Mantém os detalhes e só os sub-sitemaps que parecem ser de vagas."""
+
+    subsitemaps = [url for url in urls if eh_url_sitemap(url)]
+    com_pista = [url for url in subsitemaps if NOME_DE_SITEMAP_DE_VAGAS.search(urlsplit(url).path)]
+    escolhidos = set(com_pista[:MAXIMO_SUBSITEMAPS] or subsitemaps[:SITEMAPS_SEM_PISTA])
+
+    return tuple(url for url in urls if not eh_url_sitemap(url) or url in escolhidos)
 
 
 def _parece_detalhe_vaga(url: str) -> bool:

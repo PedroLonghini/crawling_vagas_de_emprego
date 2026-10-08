@@ -276,3 +276,249 @@ def test_extrai_campos_em_tabela_e_lista_de_definicao_sem_dois_pontos() -> None:
     assert vaga["validThrough"] == "2026-09-14"
     assert vaga["baseSalary"]["value"]["minValue"] == "8000.00"
     assert vaga["baseSalary"]["value"]["maxValue"] == "10000.00"
+
+
+DESCRICAO_LONGA = "Responsabilidades: atender clientes, organizar rotinas e apoiar a equipe. " * 5
+# Vaga publicada como post/notícia: requisitos e como se candidatar (regra das matérias).
+DESCRICAO_DE_POST = (
+    DESCRICAO_LONGA
+    + " Requisitos: ensino médio completo. Envie seu currículo para rh@empresa.example."
+)
+
+
+def _extrair(titulo: str, url: str, descricao: str = DESCRICAO_LONGA):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f"<html><head><title>{titulo}</title></head><body><h1>{titulo}</h1>"
+        f'<div class="job-description">{descricao}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="Empresa")
+
+
+def test_vaga_real_continua_sendo_extraida() -> None:
+    assert _extrair("Analista Administrativo", "https://empresa.example/vagas/123").vagas
+
+
+def test_paginas_de_listagem_nao_viram_vaga() -> None:
+    for titulo in (
+        "Vagas de Técnico Químico",
+        "494 Vagas de Oficial de Manutenção",
+        "8676 Vagas de Emprego em São José dos Campos/SP",
+        "Jobs in Crato",
+        "Trabalhe conosco",
+    ):
+        assert not _extrair(titulo, "https://empresa.example/vagas/123").vagas, titulo
+
+
+def test_conteudo_editorial_nao_vira_vaga() -> None:
+    for caminho in (
+        "/blog/como-ser-analista",
+        "/noticias/x",
+        "/profissoes/tecnico",
+        "/observatorio/",
+    ):
+        assert not _extrair("Analista de dados", f"https://empresa.example{caminho}").vagas, caminho
+
+
+def test_texto_de_cookies_nao_vale_como_descricao() -> None:
+    cookies = "Necessary cookies are essential for the website to function. " * 5
+
+    assert not _extrair("Analista", "https://empresa.example/vagas/1", cookies).vagas
+
+
+def _extrair_com_json_ld(
+    tipos: str,
+    titulo: str = "Analista Administrativo",
+    url: str = "https://empresa.example/vagas/1",
+):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f'<html><head><script type="application/ld+json">{tipos}</script>'
+        f"<title>{titulo}</title></head><body><h1>{titulo}</h1>"
+        f'<div class="job-description">{DESCRICAO_DE_POST}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="Empresa")
+
+
+def test_pagina_que_se_declara_loja_evento_ou_lista_nao_vira_vaga() -> None:
+    for tipos in (
+        '{"@type": ["ClothingStore", "Event"]}',
+        '{"@type": "CollectionPage"}',
+        '{"@graph": [{"@type": "ItemList"}]}',
+        '{"@type": "Product"}',
+    ):
+        assert not _extrair_com_json_ld(tipos).vagas, tipos
+
+
+def test_loja_ou_organizacao_no_site_inteiro_nao_derruba_a_vaga() -> None:
+    assert _extrair_com_json_ld('{"@type": "ClothingStore"}').vagas
+    assert _extrair_com_json_ld('{"@type": "Organization"}').vagas
+
+
+def test_noticia_so_vale_se_o_titulo_falar_de_vaga() -> None:
+    artigo = '{"@type": "NewsArticle"}'
+
+    url_noticia = "https://jornal.example/2026/09/calendario"
+    assert not _extrair_com_json_ld(artigo, "Eleições 2026: veja o calendário", url_noticia).vagas
+    assert _extrair_com_json_ld(artigo, "Cacau Show contrata operadora de loja", url_noticia).vagas
+    # Endereço de vaga também salva a notícia (ex.: /trabalhe-conosco/...).
+    assert _extrair_com_json_ld(artigo, "Operador de Máquina").vagas
+
+
+def test_jobposting_na_pagina_sempre_vale() -> None:
+    assert _extrair_com_json_ld('[{"@type": "Event"}, {"@type": "JobPosting"}]').vagas
+
+
+def test_tipo_com_prefixo_de_vocabulario_tambem_conta() -> None:
+    assert not _extrair_com_json_ld('{"@type": "schema:Product"}').vagas
+    assert not _extrair_com_json_ld('{"@type": "http://schema.org/Event"}').vagas
+
+
+def test_oferta_aninhada_na_organizacao_nao_derruba_a_vaga() -> None:
+    organizacao = '{"@type": "Organization", "makesOffer": {"@type": "Offer"}}'
+
+    assert _extrair_com_json_ld(organizacao).vagas
+
+
+def test_og_type_produto_so_derruba_quando_nao_fala_de_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    def extrair(titulo: str, url: str):
+        html = (
+            '<html><head><meta property="og:type" content="product">'
+            f"<title>{titulo}</title></head><body><h1>{titulo}</h1>"
+            f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+        )
+        return extrair_job_posting_html_generico(html.encode(), url=url, empresa_nome="E").vagas
+
+    assert not extrair("Camiseta Polo Azul", "https://loja.example/camiseta-polo")
+    assert extrair("Vaga: Auxiliar de Secretaria", "https://basilica.example/vaga-auxiliar")
+
+
+def _empresa(site_name: str, json_ld: str = '{"@type": "WebPage"}', empresa_nome: str = "X"):
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f'<html><head><meta property="og:site_name" content="{site_name}">'
+        f'<script type="application/ld+json">{json_ld}</script></head><body>'
+        f'<h1>Operador de Máquina</h1><div class="job-description">{DESCRICAO_DE_POST}</div>'
+        "</body></html>"
+    )
+    vagas = extrair_job_posting_html_generico(
+        html.encode(), url="https://site.example/vagas/1", empresa_nome=empresa_nome
+    ).vagas
+    return (vagas[0].get("hiringOrganization") or {}).get("name") if vagas else "SEM VAGA"
+
+
+def test_nome_de_portal_ou_jornal_nao_vira_empresa() -> None:
+    for portal in ("Empregos na Bahia", "Mais Vagas ES", "Notícias Botucatu", "Gazeta Digital"):
+        assert _empresa(portal, empresa_nome="Portal") is None, portal
+
+
+def test_nome_ambiguo_so_cai_em_pagina_de_noticia() -> None:
+    post = '{"@type": "BlogPosting"}'
+    for nome in ("Folha de Paraguaçu", "Mundo RH", "Turismoemfoco"):
+        assert _empresa(nome, empresa_nome="Portal") == nome, nome
+        assert _empresa(nome, post, empresa_nome="Portal") is None, nome
+
+
+def test_nome_da_empresa_do_site_continua_valendo() -> None:
+    assert _empresa("Comdarpe") == "Comdarpe"
+    assert _empresa("Laserflex") == "Laserflex"
+    assert _empresa("Vagalume") == "Vagalume"
+    assert _empresa("Carreiras Nu: Faça Parte do Time") == "Carreiras Nu: Faça Parte do Time"
+    # O Yoast marca páginas de empresa como Article; isso sozinho não derruba o nome.
+    assert _empresa("Massa.com.br", '{"@type": "Article"}') == "Massa.com.br"
+
+
+def test_pagina_de_noticia_nao_herda_o_nome_do_site() -> None:
+    noticia = '{"@type": "NewsArticle"}'
+
+    # A vaga passa (o endereço tem /vagas/), mas a empresa não é o jornal.
+    assert _empresa("Hora Brasil", noticia, empresa_nome="Hora Brasil") is None
+
+
+def _materia(titulo: str, corpo: str, extra: str = "") -> list:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    html = (
+        f"<html><head><title>{titulo}</title>{extra}</head><body><h1>{titulo}</h1>"
+        '<span itemprop="author">Por Fábio Cardoso</span>'
+        '<time itemprop="datePublished">10/08/2026</time>'
+        f'<div class="job-description">{corpo}</div></body></html>'
+    )
+    return extrair_job_posting_html_generico(
+        html.encode(), url="https://turismo.example/v1/2026/07/21/materia/", empresa_nome="X"
+    ).vagas
+
+
+def test_materia_com_autor_e_data_so_vale_com_cara_de_vaga() -> None:
+    noticia = "A Azul amplia o plano de contratação de pilotos. Requisitos: licença. " * 4
+    assert not _materia("Azul anuncia contratação de 446 novos pilotos", noticia)
+
+    vaga = noticia + " Interessados devem enviar currículo para rh@empresa.example."
+    assert _materia("Empresa contrata auxiliar de cozinha", vaga)
+
+
+def test_lista_de_materias_de_jornal_nao_vira_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import extrair_job_posting_html_generico
+
+    itens = "".join(
+        f'<article><time itemprop="datePublished">{d}/09/2026</time>'
+        f"<h2>Entrevista {d}</h2></article>"
+        for d in range(1, 8)
+    )
+    publisher = (
+        '<script type="application/ld+json">{"@type": "WebPage", "publisher": '
+        '{"@type": "NewsMediaOrganization", "name": "Jornal"}}</script>'
+    )
+    html = (
+        f"<html><head><title>Entrevista da Segunda</title>{publisher}</head><body>"
+        f"<h1>Entrevista da Segunda</h1>{itens}"
+        f'<div class="job-description">{DESCRICAO_LONGA}</div></body></html>'
+    )
+
+    assert not extrair_job_posting_html_generico(
+        html.encode(), url="https://jornal.example/especial/entrevista/", empresa_nome="X"
+    ).vagas
+
+
+def test_chamada_de_varias_vagas_nao_e_uma_vaga() -> None:
+    for titulo in (
+        "Bunge: MULTINACIONAL tem mais de 70 vagas de trabalho disponíveis, confira - 99 Empregos",
+        "Besni: Varejista de moda tem EXCELENTES oportunidades, confira - 99 Empregos",
+        "Magazine Luiza abre 300 vagas",
+    ):
+        assert not _extrair(titulo, "https://empregos.example/vaga/x").vagas, titulo
+
+    assert _extrair("Auxiliar de Reposição - Arujá", "https://empregos.example/vaga/x").vagas
+
+
+def test_paginas_de_lista_do_eu_dev_nao_sao_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import TITULO_DE_LISTAGEM
+
+    assert TITULO_DE_LISTAGEM.search("Vagas com Full-Stack — 300 abertas (Remoto e Híbrido)")
+    assert TITULO_DE_LISTAGEM.search("Carreira · eu.dev.br")
+    assert not TITULO_DE_LISTAGEM.search("Desenvolvedor Back-end · eu.dev.br")
+
+
+def test_busca_curso_e_chamada_de_noticia_nao_sao_vaga() -> None:
+    from observatorio_vagas.extraction.html_generico import TITULO_DE_LISTAGEM
+
+    for titulo in (
+        'Encontramos 9 vagas em 5 anúncios relacionadas à busca de "Serralheiro"',
+        "Curso gratuito de Libras abre inscrições com 1.500 vagas mensais em São Paulo",
+        "Segala's Alimentos VOLTA A CONTRATAR; Confira!",
+    ):
+        assert TITULO_DE_LISTAGEM.search(titulo), titulo
+    assert not TITULO_DE_LISTAGEM.search("Auxiliar de Cozinha - Turno Noite")
+
+
+def test_reportagem_de_muitas_vagas_nao_e_uma_vaga() -> None:
+    noticia = '{"@type": "Article"}'
+
+    assert not _extrair_com_json_ld(
+        noticia, "Outback abre 92 vagas em Campinas", "https://j.example/v/1"
+    ).vagas

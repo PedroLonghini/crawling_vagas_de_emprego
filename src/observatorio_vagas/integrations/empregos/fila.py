@@ -14,9 +14,17 @@ from uuid import UUID
 
 from observatorio_vagas.crawling.catalog import AlvoColeta
 from observatorio_vagas.domain.anuncio import AnuncioVaga
+from observatorio_vagas.domain.assinatura_vaga import (
+    IdentidadeConteudo,
+    identidade_de_payload,
+    mesma_vaga,
+)
 from observatorio_vagas.domain.enums import SituacaoPublicacaoEmpregos
 from observatorio_vagas.domain.prontidao import CAMPOS_API_EMPREGOS
-from observatorio_vagas.domain.publicacao import calcular_chave_idempotencia_empregos
+from observatorio_vagas.domain.publicacao import (
+    calcular_chave_idempotencia_empregos,
+    encontrar_publicacao_da_mesma_vaga,
+)
 from observatorio_vagas.extraction.normalizacao_vaga import (
     converter_anuncio_em_vaga_canonica,
 )
@@ -280,6 +288,49 @@ def _preparar_item(
     )
     existente = repositorio_publicacoes.buscar_por_chave(chave)
 
+    # A mesma vaga já pode estar no ar vinda de outro site (outro id, outra
+    # chave): a assinatura de conteúdo a reconhece entre lotes de dias diferentes.
+    identidade = identidade_de_payload(
+        preparacao.payload,
+        dominio=(
+            preparacao.proveniencia_fonte.dominio
+            if preparacao.proveniencia_fonte is not None
+            else None
+        ),
+    )
+    publicada = (
+        encontrar_publicacao_da_mesma_vaga(
+            repositorio_publicacoes.listar_ativas_por_assinatura(identidade.assinatura),
+            identidade=identidade,
+            external_job_posting_id=external_id,
+        )
+        if existente is None and identidade is not None
+        else None
+    )
+    if publicada is not None:
+        return ItemFilaEmpregos(
+            anuncio_id=anuncio.id,
+            titulo=vaga.titulo_normalizado,
+            alvo_id=anuncio.alvo_id,
+            empresa_id=empresa.id,
+            vaga_id=vaga.id,
+            situacao=SituacaoItemFilaEmpregos.DUPLICADA,
+            campos_preenchidos=len(relatorio.campos_preenchidos),
+            total_campos=relatorio.total_campos,
+            bloqueios=(
+                MotivoFilaEmpregos(
+                    codigo="duplicada_de_vaga_publicada",
+                    mensagem=(
+                        "Mesmo título, empresa, local e descrição de uma vaga já publicada "
+                        f"(anúncio {publicada.anuncio_id}, situação {publicada.situacao.value})."
+                    ),
+                ),
+            ),
+            alertas=alertas,
+            chave_idempotencia=chave,
+            situacao_publicacao_existente=publicada.situacao,
+        )
+
     if existente is not None:
         return ItemFilaEmpregos(
             anuncio_id=anuncio.id,
@@ -349,16 +400,31 @@ def _deduplicar_itens(
 ) -> tuple[ItemFilaEmpregos, ...]:
     """Impede publicar duas vezes a mesma vaga vinda de fontes diferentes."""
 
-    primeiras_por_assinatura: dict[tuple[str, str, str, str], ItemFilaEmpregos] = {}
+    aceitas_por_assinatura: dict[str, list[tuple[ItemFilaEmpregos, IdentidadeConteudo]]] = {}
     resultado: list[ItemFilaEmpregos] = []
     for item in itens:
-        assinatura = _assinatura_duplicidade(item)
-        if item.situacao is not SituacaoItemFilaEmpregos.ELEGIVEL or assinatura is None:
+        # Mesma regra usada contra as vagas já publicadas: começo da descrição
+        # entre sites diferentes, descrição inteira no mesmo site.
+        identidade = _identidade_do_item(item)
+        if item.situacao is not SituacaoItemFilaEmpregos.ELEGIVEL or identidade is None:
             resultado.append(item)
             continue
-        original = primeiras_por_assinatura.get(assinatura)
+        aceitas = aceitas_por_assinatura.setdefault(identidade.assinatura, [])
+        original = next(
+            (
+                aceito
+                for aceito, identidade_aceita in aceitas
+                if mesma_vaga(
+                    dominio_a=identidade_aceita.dominio,
+                    assinatura_completa_a=identidade_aceita.assinatura_completa,
+                    dominio_b=identidade.dominio,
+                    assinatura_completa_b=identidade.assinatura_completa,
+                )
+            ),
+            None,
+        )
         if original is None:
-            primeiras_por_assinatura[assinatura] = item
+            aceitas.append((item, identidade))
             resultado.append(item)
             continue
         resultado.append(
@@ -380,33 +446,12 @@ def _deduplicar_itens(
     return tuple(resultado)
 
 
-def _assinatura_duplicidade(item: ItemFilaEmpregos) -> tuple[str, str, str, str] | None:
-    """Usa somente campos publicados; não aproxima vagas de empresas diferentes."""
-
-    payload = item.preparacao.payload if item.preparacao is not None else None
-    if not isinstance(payload, dict):
+def _identidade_do_item(item: ItemFilaEmpregos) -> IdentidadeConteudo | None:
+    preparacao = item.preparacao
+    if preparacao is None:
         return None
-    empresa = payload.get("company")
-    local = payload.get("location")
-    descricao = payload.get("description")
-    if (
-        not isinstance(empresa, dict)
-        or not isinstance(local, dict)
-        or not isinstance(descricao, str)
-    ):
-        return None
-    nome_empresa = empresa.get("name")
-    endereco = local.get("address")
-    if not isinstance(nome_empresa, str) or not isinstance(endereco, str):
-        return None
-    # O crédito da fonte é adicionado ao final na preparação e não deve
-    # impedir a identificação da mesma vaga em duas fontes autorizadas.
-    descricao_principal = descricao.split("\n\nFonte:", maxsplit=1)[0]
-    return tuple(
-        _normalizar_assinatura(valor)
-        for valor in (item.titulo, nome_empresa, endereco, descricao_principal)
+    proveniencia = getattr(preparacao, "proveniencia_fonte", None)
+    return identidade_de_payload(
+        preparacao.payload,
+        dominio=proveniencia.dominio if proveniencia is not None else None,
     )
-
-
-def _normalizar_assinatura(valor: str) -> str:
-    return " ".join(valor.casefold().split())

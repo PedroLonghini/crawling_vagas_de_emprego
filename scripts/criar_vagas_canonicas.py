@@ -224,6 +224,52 @@ def _exibir_atualizacao(
         )
 
 
+def processar_anuncios_em_lote(
+    anuncios: Sequence[AnuncioVaga],
+    *,
+    repositorio_vagas: RepositorioVagasMongoDB,
+) -> tuple[int, int, list[tuple[UUID, str]]]:
+    """Cria ou atualiza as vagas de vários anúncios com duas idas ao banco.
+
+    Aplica as mesmas regras de ``processar_anuncios`` com ``confirmar``:
+    as vagas existentes são buscadas numa consulta e todas são gravadas
+    numa única operação em lote.
+
+    Devolve vagas criadas, vagas reutilizadas e as falhas por anúncio.
+    """
+
+    falhas: list[tuple[UUID, str]] = []
+    extraidas: list[VagaCanonica] = []
+
+    for anuncio in anuncios:
+        try:
+            extraidas.append(converter_anuncio_em_vaga_canonica(anuncio))
+        except ErroNormalizacaoVaga as erro:
+            falhas.append((anuncio.id, str(erro)))
+
+    existentes = repositorio_vagas.buscar_por_ids([vaga.id for vaga in extraidas])
+
+    # Ordem preservada; uma vaga repetida no lote parte do estado anterior,
+    # como aconteceria gravando uma por vez.
+    preparadas: dict[UUID, VagaCanonica] = {}
+    criadas = 0
+    reutilizadas = 0
+
+    for vaga in extraidas:
+        existente = preparadas.get(vaga.id) or existentes.get(vaga.id)
+
+        if existente is None:
+            preparadas[vaga.id] = vaga
+            criadas += 1
+        else:
+            preparadas[vaga.id] = _preparar_vaga_atualizada(existente=existente, extraida=vaga)
+            reutilizadas += 1
+
+    repositorio_vagas.salvar_lote(list(preparadas.values()))
+
+    return criadas, reutilizadas, falhas
+
+
 def processar_anuncios(
     anuncios: Sequence[AnuncioVaga],
     *,

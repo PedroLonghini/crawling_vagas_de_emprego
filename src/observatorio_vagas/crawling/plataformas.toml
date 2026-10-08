@@ -1,0 +1,161 @@
+# Registro central das plataformas de vagas conhecidas pelo crawler.
+#
+# Adicionar uma EMPRESA que usa uma plataforma daqui NÃO exige editar este
+# arquivo: basta colar a URL em config/catalogo_fontes.csv.
+# Este arquivo só muda quando surge um TIPO novo de plataforma, ou quando uma
+# plataforma passa a usar outro host de API.
+#
+# Campos de cada [[plataforma]]:
+#   nome              identificador curto, único.
+#   exemplo_portal    URL de carreira de exemplo (o teste usa o host dela).
+#   portais           hosts exatos das páginas de carreira.
+#   portais_sufixo    sufixos de host (".vagas.solides.com.br" casa qualquer
+#                     empresa dessa plataforma).
+#   multi_locatario   true quando VÁRIAS empresas dividem o mesmo host.
+#   sitemap           "padrao"        baixa /sitemap.xml do host;
+#                     "nenhum"        nunca baixa o sitemap (a plataforma usa API
+#                                     ou o sitemap é da plataforma inteira);
+#                     "por_locatario" baixa, mas só segue entradas da própria
+#                                     empresa (exige multi_locatario = true).
+#   sufixo_sitemap_locatario  sufixo do arquivo de sitemap da empresa, por
+#                     exemplo "-jobs" para /sitemaps/<empresa>-jobs.xml.
+#   hosts_json        hosts que respondem JSON (recebem Accept: application/json).
+#   sufixos_json      o mesmo, por sufixo de host.
+#
+# [[plataforma.companheiro]]  host de API/portal EXTERNO que a página de
+#   carreira consulta. Só o que estiver descrito aqui passa pela barreira.
+#   host      host exato.
+#   caminho   expressão regular aplicada ao caminho INTEIRO (fullmatch).
+#   consulta  parâmetros que precisam existir na URL (opcional).
+#   exemplo   URL de exemplo; o registro se recusa a carregar se ela não casar
+#             com a própria regra.
+#
+# [[plataforma.redirecionamento]]  redirecionamento oficial a partir do portal.
+#   host             host de destino.
+#   mesmo_caminho    true: destino precisa ter o mesmo caminho e consulta da origem.
+#   caminho          alternativa a mesmo_caminho: regex do caminho de destino.
+#   consulta         parâmetros exigidos no destino (opcional).
+#   consulta_opcional true: aceita destino sem nenhuma consulta.
+#   exemplo_origem / exemplo   URLs de exemplo antes e depois do redirecionamento.
+
+[[plataforma]]
+nome = "abler"
+exemplo_portal = "https://ats.abler.com.br/jobs/goldenrh"
+portais = ["ats.abler.com.br"]
+multi_locatario = true
+sitemap = "nenhum"
+hosts_json = ["hulk-smash.abler.com.br"]
+
+[[plataforma.companheiro]]
+host = "hulk-smash.abler.com.br"
+# %2B permite locatários com "+" no nome, como liga%2B.
+caminho = '/api/company/v1/careers_pages/(?:[a-z0-9_-]|%2[bB])+/vacancies'
+exemplo = "https://hulk-smash.abler.com.br/api/company/v1/careers_pages/liga%2b/vacancies?per_page=100&page=1"
+
+[[plataforma]]
+nome = "solides"
+exemplo_portal = "https://exemplo.vagas.solides.com.br/"
+portais_sufixo = [".vagas.solides.com.br"]
+multi_locatario = true
+hosts_json = ["apigw.solides.com.br"]
+
+[[plataforma.companheiro]]
+host = "apigw.solides.com.br"
+caminho = '/jobs/v3/home/vacancy'
+exemplo = "https://apigw.solides.com.br/jobs/v3/home/vacancy?take=12&slug=exemplo&page=1"
+
+[[plataforma]]
+nome = "smartrecruiters"
+exemplo_portal = "https://jobs.smartrecruiters.com/BoschGroup"
+portais = ["jobs.smartrecruiters.com", "careers.smartrecruiters.com"]
+multi_locatario = true
+# A listagem vem da API; o sitemap seria da plataforma inteira.
+sitemap = "nenhum"
+hosts_json = ["api.smartrecruiters.com"]
+
+[[plataforma.companheiro]]
+host = "api.smartrecruiters.com"
+caminho = '/v1/companies/[A-Za-z0-9_-]+/postings'
+exemplo = "https://api.smartrecruiters.com/v1/companies/BoschGroup/postings?limit=100&offset=0"
+
+[[plataforma.redirecionamento]]
+host = "careers.smartrecruiters.com"
+mesmo_caminho = true
+exemplo_origem = "https://jobs.smartrecruiters.com/BoschGroup"
+exemplo = "https://careers.smartrecruiters.com/BoschGroup"
+
+[[plataforma]]
+nome = "quickin"
+exemplo_portal = "https://jobs.quickin.io/exemplo/jobs"
+portais = ["jobs.quickin.io"]
+multi_locatario = true
+# /sitemap.xml é um índice com centenas de empresas (/sitemaps/<empresa>-jobs.xml).
+# Só o arquivo da própria empresa é seguido.
+sitemap = "por_locatario"
+sufixo_sitemap_locatario = "-jobs"
+
+[[plataforma]]
+nome = "senior"
+exemplo_portal = "https://platform.senior.com.br/hcmrs/hcm/curriculo/?tenant=exemplo&tenantdomain=exemplo.com.br"
+portais = ["platform.senior.com.br"]
+portais_sufixo = [".portaldetalentos.senior.com.br"]
+multi_locatario = true
+hosts_json = ["platform.senior.com.br"]
+
+[[plataforma]]
+nome = "workday"
+exemplo_portal = "https://exemplo.wd1.myworkdayjobs.com/pt-BR/External"
+portais_sufixo = [".myworkdayjobs.com"]
+sufixos_json = [".myworkdayjobs.com"]
+
+[[plataforma]]
+nome = "csod_bradesco"
+exemplo_portal = "https://banco.bradesco/html/classic/carreiras/index.shtm"
+portais = ["banco.bradesco"]
+
+[[plataforma.companheiro]]
+host = "bradesco.csod.com"
+caminho = '/ux/ats/careersite/\d+/home(?:/requisition/\d+)?'
+consulta = { c = "bradesco" }
+exemplo = "https://bradesco.csod.com/ux/ats/careersite/1/home/requisition/84642?c=bradesco"
+
+[[plataforma.redirecionamento]]
+host = "bradesco.csod.com"
+caminho = '/ux/ats/careersite/\d+/home(?:/requisition/\d+)?'
+consulta = { c = "bradesco" }
+consulta_opcional = true
+exemplo_origem = "https://banco.bradesco/carreiras"
+exemplo = "https://bradesco.csod.com/ux/ats/careersite/1/home?c=bradesco"
+
+[[plataforma]]
+nome = "empregare_sicoob"
+exemplo_portal = "https://www.sicoob.com.br/web/sicoob/trabalhe-conosco"
+portais = ["www.sicoob.com.br"]
+
+[[plataforma.companheiro]]
+host = "sicoob.empregare.com"
+caminho = '/pt-br(?:/vagas|/vaga-[^/]+_\d+)?'
+exemplo = "https://sicoob.empregare.com/pt-br/vagas?pagina=2"
+
+[[plataforma]]
+nome = "nestle"
+exemplo_portal = "https://www.nestle.com.br/jobs/search-jobs"
+portais = ["www.nestle.com.br"]
+sitemap = "nenhum"
+
+[[plataforma.companheiro]]
+host = "jobdetails.nestle.com"
+caminho = '/job/[^/]+/\d+/'
+exemplo = "https://jobdetails.nestle.com/job/Rio-de-Janeiro-Banco-de-Talentos-RJ-22775-055/857853701/?feedId=256801"
+
+[[plataforma]]
+nome = "basf"
+exemplo_portal = "https://www.basf.com/br/pt/careers/jobs"
+portais = ["www.basf.com"]
+sitemap = "nenhum"
+
+[[plataforma.companheiro]]
+host = "career5.successfactors.eu"
+caminho = '/career'
+consulta = { company = "C0000159936P" }
+exemplo = "https://career5.successfactors.eu/career?company=C0000159936P"

@@ -1,5 +1,8 @@
 """Testes da interface segura do importador PBH."""
 
+from datetime import UTC, datetime
+from functools import partial
+
 from scripts import importar_vagas_pbh
 
 
@@ -19,9 +22,18 @@ def test_previa_nao_abre_mongodb(capsys: object) -> None:
     assert "SIMULAÇÃO CONCLUÍDA" in saida
 
 
-def test_somente_vigentes_aplica_filtro(capsys: object) -> None:
+def test_somente_vigentes_aplica_filtro(capsys: object, monkeypatch: object) -> None:
     """O filtro deve retirar anúncios encerrados sem apagar o histórico."""
 
+    # Congela o relógio: a validade operacional depende da data da observação.
+    monkeypatch.setattr(
+        importar_vagas_pbh,
+        "importar_vagas_pbh_csv",
+        partial(
+            importar_vagas_pbh.importar_vagas_pbh_csv,
+            observado_em=datetime(2026, 9, 10, tzinfo=UTC),
+        ),
+    )
     codigo = importar_vagas_pbh.executar(
         [
             "--arquivo",

@@ -17,7 +17,9 @@ from observatorio_vagas.integrations.empregos.preparacao import (
 )
 from observatorio_vagas.integrations.empregos.publicador import (
     ResultadoPublicacaoEmpregosPersistida,
+    VagaJaPublicadaPorOutraFonte,
 )
+from observatorio_vagas.storage.mongodb.publicacoes import TravaPublicacaoOcupada
 
 
 class PublicadorVagaEmpregos(Protocol):
@@ -41,6 +43,7 @@ class SituacaoResultadoLoteEmpregos(StrEnum):
 
     IGNORADA_BLOQUEIO = "ignorada_bloqueio"
     IGNORADA_HISTORICO = "ignorada_historico"
+    IGNORADA_DUPLICADA = "ignorada_duplicada"
     ADIADA_LIMITE = "adiada_limite"
     SIMULADA = "simulada"
     PUBLICADA = "publicada"
@@ -107,6 +110,7 @@ class ResultadoPublicacaoLoteEmpregos:
         return self._por_situacao(
             SituacaoResultadoLoteEmpregos.IGNORADA_BLOQUEIO,
             SituacaoResultadoLoteEmpregos.IGNORADA_HISTORICO,
+            SituacaoResultadoLoteEmpregos.IGNORADA_DUPLICADA,
             SituacaoResultadoLoteEmpregos.ADIADA_LIMITE,
         )
 
@@ -155,6 +159,7 @@ def publicar_fila_empregos(
 
     resultados: list[ItemResultadoLoteEmpregos] = []
     elegiveis_processadas = 0
+    trava_ocupada = False
 
     for item in fila.itens:
         if item.situacao is SituacaoItemFilaEmpregos.BLOQUEADA:
@@ -175,6 +180,28 @@ def publicar_fila_empregos(
                     mensagem=(
                         "A operação já possui histórico e não será repetida automaticamente."
                     ),
+                )
+            )
+            continue
+
+        if item.situacao is SituacaoItemFilaEmpregos.DUPLICADA:
+            # A mesma vaga já está no lote ou no ar: não é falha e não ocupa
+            # uma das vagas do limite de envios.
+            resultados.append(
+                _resultado_ignorado(
+                    item,
+                    situacao=SituacaoResultadoLoteEmpregos.IGNORADA_DUPLICADA,
+                    mensagem=_mensagem_bloqueios(item),
+                )
+            )
+            continue
+
+        if trava_ocupada:
+            resultados.append(
+                _resultado_ignorado(
+                    item,
+                    situacao=SituacaoResultadoLoteEmpregos.ADIADA_LIMITE,
+                    mensagem="Outra publicação estava em andamento; fica para a próxima execução.",
                 )
             )
             continue
@@ -210,6 +237,32 @@ def publicar_fila_empregos(
                 anuncio_id=item.anuncio_id,
                 confirmar_publicacao=confirmar_publicacao,
             )
+        except VagaJaPublicadaPorOutraFonte as erro:
+            # Outra execução publicou a mesma vaga depois que a fila foi montada:
+            # é duplicada, não falha, e devolve a vaga no limite.
+            elegiveis_processadas -= 1
+            resultados.append(
+                _resultado_ignorado(
+                    item,
+                    situacao=SituacaoResultadoLoteEmpregos.IGNORADA_DUPLICADA,
+                    mensagem=str(erro),
+                )
+            )
+            continue
+        except TravaPublicacaoOcupada as erro:
+            # Outra publicação segura a trava: esperar 60 s por item não ajuda.
+            # Este item e os seguintes ficam para a próxima execução.
+            resultados.append(
+                ItemResultadoLoteEmpregos(
+                    anuncio_id=item.anuncio_id,
+                    vaga_id=item.vaga_id,
+                    titulo=item.titulo,
+                    situacao=SituacaoResultadoLoteEmpregos.FALHA,
+                    mensagem=str(erro),
+                )
+            )
+            trava_ocupada = True
+            continue
         except Exception as erro:
             resultados.append(
                 ItemResultadoLoteEmpregos(

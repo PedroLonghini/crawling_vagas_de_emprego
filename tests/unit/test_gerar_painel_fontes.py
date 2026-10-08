@@ -45,6 +45,8 @@ def test_painel_preserva_distincao_entre_candidato_e_anuncio_elegivel():
                 "candidatos_unicos": 2,
                 "detalhes_agendados": 2,
                 "detalhes_http_ok": 1,
+                "diagnostico": "detalhes_com_falha_de_acesso",
+                "proxima_acao": "Validar o detalhe.",
                 "erros": {"https://exemplo.test/erro": {}},
                 "detalhes_sem_resposta": ["https://exemplo.test/pendente"],
             }
@@ -57,4 +59,8 @@ def test_painel_preserva_distincao_entre_candidato_e_anuncio_elegivel():
     assert painel["totais"]["detalhes_http_ok"] == 1
     assert painel["totais"]["anuncios_elegiveis"] is None
     assert painel["fontes"][0]["erros_download"] == 1
+    assert painel["totais"]["fontes_por_diagnostico"] == {
+        "detalhes_com_falha_de_acesso": 1
+    }
+    assert "detalhes_com_falha_de_acesso" in painel_markdown(painel)
     assert "ainda não é calculável" in painel_markdown(painel)

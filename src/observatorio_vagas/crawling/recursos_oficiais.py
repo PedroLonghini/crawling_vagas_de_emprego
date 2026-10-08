@@ -1,16 +1,24 @@
-"""Exceções mínimas para recursos licenciados hospedados fora do portal CKAN."""
+"""Exceções mínimas para recursos hospedados fora do domínio da fonte.
+
+As regras das plataformas de vagas (APIs companheiras e redirecionamentos
+oficiais) vêm do registro ``plataformas.toml``; aqui ficam só a barreira e a
+exceção do CKAN do Espírito Santo.
+"""
 
 import re
 from urllib.parse import urlsplit
 
 from scrapy import Request
 
+from observatorio_vagas.crawling.plataformas import (
+    permite_companheiro,
+    permite_redirecionamento,
+)
+
 _RECURSO_ES = re.compile(
     r"/dataset/(?:c43d6653-634a-4e6e-bd66-c9ca3f6ee106|vagas-de-emprego)"
     r"/resource/(?P<id>[a-f0-9-]{36})/download/(?P<arquivo>[a-z0-9_-]+\.csv)"
 )
-_API_ABLER = re.compile(r"/api/company/v1/careers_pages/[a-z0-9_-]+/vacancies$")
-_API_SMARTRECRUITERS = re.compile(r"/v1/companies/[A-Za-z0-9_-]+/postings$")
 
 
 def permite_redirecionamento_recurso(request: Request) -> bool:
@@ -24,18 +32,17 @@ def permite_redirecionamento_recurso(request: Request) -> bool:
     if not isinstance(origens, list) or not origens or not isinstance(origens[-1], str):
         return False
     origem, destino = urlsplit(origens[-1]), urlsplit(request.url)
+    dominio_meta = request.meta.get("observatorio_dominio")
     if (
-        request.meta.get("observatorio_dominio") == "jobs.smartrecruiters.com"
+        isinstance(dominio_meta, str)
         and request.cb_kwargs.get("fonte") == "pagina_carreiras"
-    ):
-        return (
-            origem.scheme == "https"
-            and origem.netloc == "jobs.smartrecruiters.com"
-            and destino.scheme == "https"
-            and destino.netloc == "careers.smartrecruiters.com"
-            and origem.path == destino.path
-            and origem.query == destino.query
+        and permite_redirecionamento(
+            dominio_origem=dominio_meta,
+            url_origem=origens[-1],
+            url_destino=request.url,
         )
+    ):
+        return True
     if request.meta.get("observatorio_dominio") != "dados.es.gov.br":
         return False
     if request.cb_kwargs.get("fonte") != "ckan":
@@ -62,16 +69,7 @@ def permite_api_publica_companheira(request: Request) -> bool:
 
     if request.cb_kwargs.get("fonte") != "pagina_carreiras":
         return False
-    destino = urlsplit(request.url)
-    if request.meta.get("observatorio_dominio") == "ats.abler.com.br":
-        return (
-            destino.scheme == "https"
-            and destino.netloc == "hulk-smash.abler.com.br"
-            and _API_ABLER.fullmatch(destino.path) is not None
-        )
-    return (
-        request.meta.get("observatorio_dominio") == "jobs.smartrecruiters.com"
-        and destino.scheme == "https"
-        and destino.netloc == "api.smartrecruiters.com"
-        and _API_SMARTRECRUITERS.fullmatch(destino.path) is not None
+    dominio_meta = request.meta.get("observatorio_dominio")
+    return isinstance(dominio_meta, str) and permite_companheiro(
+        dominio_origem=dominio_meta, url=request.url
     )

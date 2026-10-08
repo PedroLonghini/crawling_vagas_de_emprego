@@ -1,5 +1,9 @@
 """Configurações seguras do crawler Scrapy."""
 
+from observatorio_vagas.crawling.ritmo_sites import carregar_ritmo
+
+_RITMO = carregar_ritmo()
+
 # Nome interno do projeto dentro do Scrapy.
 BOT_NAME = "observatorio_vagas"
 
@@ -55,49 +59,18 @@ TELNETCONSOLE_ENABLED = False
 # usa principalmente conexões em espera, não processamento contínuo de CPU.
 CONCURRENT_REQUESTS = 180
 
-# Durante o piloto, apenas uma requisição simultânea
-# será enviada para cada domínio.
-CONCURRENT_REQUESTS_PER_DOMAIN = 1
+# Padrão para os sites que não aparecem em config/ritmo_sites.csv (linha "*").
+CONCURRENT_REQUESTS_PER_DOMAIN = _RITMO.padrao.simultaneas
 
 # Espera mínima entre requisições para o mesmo domínio.
-DOWNLOAD_DELAY = 1.0
+DOWNLOAD_DELAY = _RITMO.padrao.intervalo
 
 # Varia levemente o intervalo para evitar rajadas regulares.
 RANDOMIZE_DOWNLOAD_DELAY = True
 
-# As fontes Abler aprovadas possuem uma listagem própria e adaptador dedicado;
-# não precisam de sitemap. Mantemos uma aceleração moderada e exclusiva para
-# esse domínio, sem mudar o limite conservador dos demais sites.
-DOWNLOAD_SLOTS = {
-    "ats.abler.com.br": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    # APIs públicas de ATS já possuem adaptadores próprios: nelas a resposta
-    # é JSON pequeno, sem renderização de navegador. Acelerar só esses slots
-    # preserva o comportamento prudente para sites de empresas individuais.
-    "apigw.solides.com.br": {
-        "concurrency": 3,
-        "delay": 0.35,
-        "randomize_delay": True,
-    },
-    "platform.senior.com.br": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    "jobs.lever.co": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-    "jobs.quickin.io": {
-        "concurrency": 2,
-        "delay": 0.5,
-        "randomize_delay": True,
-    },
-}
+# Ritmo por site: vem de config/ritmo_sites.csv (um arquivo para editar à mão).
+# Os sites listados lá usam um slot próprio e ficam fora do ajuste automático.
+DOWNLOAD_SLOTS = _RITMO.slots_scrapy()
 
 
 # AutoThrottle adapta a velocidade de acordo com
@@ -110,10 +83,10 @@ AUTOTHROTTLE_START_DELAY = 1.0
 # Se o site estiver lento, o intervalo pode chegar a 30 segundos.
 AUTOTHROTTLE_MAX_DELAY = 30.0
 
-# Busca manter aproximadamente uma requisição por domínio.
+# Busca manter aproximadamente duas requisições por domínio.
 # Mantém uma média prudente por domínio; acelerações específicas continuam
 # configuradas por slot e não devem transformar a coleta em rajadas.
-AUTOTHROTTLE_TARGET_CONCURRENCY = 1.0
+AUTOTHROTTLE_TARGET_CONCURRENCY = 2.0
 
 # Não mostra os cálculos internos do AutoThrottle nos logs normais.
 AUTOTHROTTLE_DEBUG = False

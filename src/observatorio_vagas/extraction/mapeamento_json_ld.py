@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import html
 from datetime import date, datetime
 from hashlib import sha256
 from typing import Any
@@ -78,7 +79,11 @@ def _converter_data(
             # O Python entende +00:00, enquanto algumas fontes usam Z.
             texto_normalizado = texto.removesuffix("Z") + ("+00:00" if texto.endswith("Z") else "")
 
-            return datetime.fromisoformat(texto_normalizado)
+            momento = datetime.fromisoformat(texto_normalizado)
+
+            # Sem fuso horário, a hora não é confiável (o modelo exige fuso):
+            # fica só a data, como "2027-04-10T23:59" -> 2027-04-10.
+            return momento.date() if momento.tzinfo is None else momento
 
         return date.fromisoformat(texto)
 
@@ -231,7 +236,11 @@ def converter_job_posting_em_anuncio(
 ) -> AnuncioVaga:
     """Converte um JobPosting estruturado em anúncio auditável."""
 
+    # Título com entidade HTML ("Vendedor &#8211; Arujá", às vezes codificada duas
+    # vezes): 7.281 anúncios na coleta de 06/10/2026. Vira o caractere.
     titulo = _texto(documento.get("title"))
+    if titulo is not None and "&" in titulo:
+        titulo = " ".join(html.unescape(html.unescape(titulo)).split()) or None
 
     if titulo is None:
         raise ValueError("JobPosting não possui title")

@@ -2,7 +2,11 @@
 
 from datetime import UTC, date, datetime
 
-from scripts.encerrar_anuncios_expirados import encerrar_expirados, esta_expirado
+from scripts.encerrar_anuncios_expirados import (
+    encerrar_expirados,
+    encerrar_todos_expirados,
+    esta_expirado,
+)
 
 from observatorio_vagas.domain.anuncio import AnuncioVaga
 from observatorio_vagas.domain.enums import Fonte, StatusAnuncio
@@ -78,3 +82,34 @@ def test_encerrar_expirados_atualiza_sem_apagar_historico() -> None:
     assert repositorio.salvos[0].id == expirado.id
     assert repositorio.salvos[0].status is StatusAnuncio.ENCERRADO
     assert repositorio.salvos[0].primeira_observacao_em == expirado.primeira_observacao_em
+
+
+def test_varredura_encerra_vencidas_no_banco_inteiro_com_uma_consulta():
+    """--todos: sem o limite de 10.000; validade de ontem fecha, a de hoje não."""
+
+    class ColecaoFalsa:
+        def __init__(self):
+            self.filtros = []
+
+        def count_documents(self, filtro):
+            self.filtros.append(filtro)
+            return 3
+
+        def update_many(self, filtro, atualizacao):
+            self.filtros.append(filtro)
+            self.atualizacao = atualizacao
+            return type("R", (), {"modified_count": 3})()
+
+    momento = datetime(2026, 10, 8, 15, 30, tzinfo=UTC)
+    colecao = ColecaoFalsa()
+
+    previa = encerrar_todos_expirados(colecao, confirmar=False, momento_referencia=momento)
+    assert previa.expirados == 3 and not hasattr(colecao, "atualizacao")
+    assert colecao.filtros[0] == {
+        "expira_em": {"$lt": datetime(2026, 10, 8, tzinfo=UTC)},
+        "status": {"$ne": "encerrado"},
+    }
+
+    gravado = encerrar_todos_expirados(colecao, confirmar=True, momento_referencia=momento)
+    assert gravado.atualizados == 3
+    assert colecao.atualizacao == {"$set": {"status": "encerrado"}}

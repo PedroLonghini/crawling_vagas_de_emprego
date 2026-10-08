@@ -52,15 +52,31 @@ class RepositorioVagasFalso:
 
 
 class RepositorioPublicacoesFalso:
-    """Devolve uma operação opcional para qualquer chave consultada."""
+    """Devolve uma operação opcional para qualquer chave consultada.
 
-    def __init__(self, operacao: OperacaoPublicacaoEmpregos | None = None) -> None:
+    ``publicadas`` simula vagas já no ar, procuradas pela assinatura de conteúdo.
+    """
+
+    def __init__(
+        self,
+        operacao: OperacaoPublicacaoEmpregos | None = None,
+        *publicadas: OperacaoPublicacaoEmpregos,
+    ) -> None:
         self.operacao = operacao
+        self.publicadas = publicadas
         self.chaves_consultadas: list[str] = []
 
     def buscar_por_chave(self, chave: str) -> OperacaoPublicacaoEmpregos | None:
         self.chaves_consultadas.append(chave)
         return self.operacao
+
+    def listar_ativas_por_assinatura(self, assinatura: str) -> list[OperacaoPublicacaoEmpregos]:
+        return [
+            publicada
+            for publicada in self.publicadas
+            if publicada.assinatura_conteudo == assinatura
+            and publicada.situacao is not SituacaoPublicacaoEmpregos.REJEITADA
+        ]
 
 
 def criar_cenario(
@@ -246,6 +262,207 @@ def test_fila_indica_quando_vaga_canonica_ainda_nao_existe() -> None:
     assert item.vaga_id is not None
 
 
+def _publicada_em_outro_site(
+    assinatura: str,
+    *,
+    situacao: SituacaoPublicacaoEmpregos = SituacaoPublicacaoEmpregos.SUCESSO,
+) -> OperacaoPublicacaoEmpregos:
+    """Operação de outro site (outro id) com a mesma assinatura de conteúdo."""
+
+    enviando = OperacaoPublicacaoEmpregos(
+        vaga_id=uuid4(),
+        anuncio_id=uuid4(),
+        external_job_posting_id="ID-DO-OUTRO-SITE",
+        operation_type="CREATE",
+        payload_sha256="c" * 64,
+        assinatura_conteudo=assinatura,
+        criado_em=AGORA,
+        atualizado_em=AGORA,
+    ).iniciar_envio(momento=AGORA)
+    return enviando.concluir(
+        situacao=situacao,
+        momento=AGORA + timedelta(seconds=1),
+        status_http=201 if situacao is SituacaoPublicacaoEmpregos.SUCESSO else 400,
+    )
+
+
+def _assinatura_da_vaga_pronta(empresa, anuncio, vaga, alvo) -> str:
+    from observatorio_vagas.domain.assinatura_vaga import assinatura_de_payload
+
+    item = preparar_fila_empregos(
+        [anuncio],
+        alvos={alvo.alvo_id: alvo},
+        repositorio_empresas=RepositorioEmpresasFalso(empresa),
+        repositorio_vagas=RepositorioVagasFalso(vaga),
+        repositorio_publicacoes=RepositorioPublicacoesFalso(),
+        momento_referencia=AGORA,
+    ).itens[0]
+    assinatura = assinatura_de_payload(item.preparacao.payload)
+    assert assinatura is not None
+    return assinatura
+
+
+def test_mesma_vaga_ja_publicada_por_outro_site_nao_volta_ao_lote() -> None:
+    """Lote de outro dia: a cópia de outro site é barrada pela assinatura."""
+
+    empresa, anuncio, vaga, alvo = criar_cenario()
+    assinatura = _assinatura_da_vaga_pronta(empresa, anuncio, vaga, alvo)
+
+    resultado = preparar_fila_empregos(
+        [anuncio],
+        alvos={alvo.alvo_id: alvo},
+        repositorio_empresas=RepositorioEmpresasFalso(empresa),
+        repositorio_vagas=RepositorioVagasFalso(vaga),
+        repositorio_publicacoes=RepositorioPublicacoesFalso(
+            None, _publicada_em_outro_site(assinatura)
+        ),
+        momento_referencia=AGORA,
+    )
+
+    item = resultado.itens[0]
+    assert item.situacao is SituacaoItemFilaEmpregos.DUPLICADA
+    assert item.bloqueios[0].codigo == "duplicada_de_vaga_publicada"
+    assert item.preparacao is None
+    assert resultado.elegiveis == ()
+
+
+def test_copia_passa_se_a_publicacao_original_foi_rejeitada() -> None:
+    """Rejeitada pela API não está no ar: a vaga pode sair por outra fonte."""
+
+    empresa, anuncio, vaga, alvo = criar_cenario()
+    assinatura = _assinatura_da_vaga_pronta(empresa, anuncio, vaga, alvo)
+
+    resultado = preparar_fila_empregos(
+        [anuncio],
+        alvos={alvo.alvo_id: alvo},
+        repositorio_empresas=RepositorioEmpresasFalso(empresa),
+        repositorio_vagas=RepositorioVagasFalso(vaga),
+        repositorio_publicacoes=RepositorioPublicacoesFalso(
+            None,
+            _publicada_em_outro_site(assinatura, situacao=SituacaoPublicacaoEmpregos.REJEITADA),
+        ),
+        momento_referencia=AGORA,
+    )
+
+    assert resultado.itens[0].situacao is SituacaoItemFilaEmpregos.ELEGIVEL
+
+
+def _item_com_payload(
+    *, dominio: str | None, descricao: str, titulo: str = "Vendedor"
+) -> ItemFilaEmpregos:
+    return ItemFilaEmpregos(
+        anuncio_id=uuid4(),
+        titulo=titulo,
+        alvo_id=dominio,
+        empresa_id=uuid4(),
+        vaga_id=uuid4(),
+        situacao=SituacaoItemFilaEmpregos.ELEGIVEL,
+        preparacao=SimpleNamespace(
+            payload={
+                "title": titulo,
+                "company": {"name": "Loja X"},
+                "location": {"address": "Curitiba, PR"},
+                "description": descricao,
+            },
+            proveniencia_fonte=SimpleNamespace(dominio=dominio) if dominio else None,
+        ),
+    )
+
+
+COMECO_IGUAL = "Atendimento ao cliente, vendas e organização da loja. " * 8  # > 300 caracteres
+
+
+def test_mesmo_site_com_descricao_diferente_no_fim_sao_vagas_diferentes() -> None:
+    """Falso positivo medido: turnos/unidades diferentes com o mesmo começo de texto."""
+
+    itens = _deduplicar_itens(
+        (
+            _item_com_payload(dominio="loja.com.br", descricao=COMECO_IGUAL + "Turno 12h-20h."),
+            _item_com_payload(dominio="www.loja.com.br", descricao=COMECO_IGUAL + "Turno 14h-22h."),
+            _item_com_payload(dominio="loja.com.br", descricao=COMECO_IGUAL + "Turno 12h-20h."),
+        )
+    )
+
+    assert [item.situacao for item in itens] == [
+        SituacaoItemFilaEmpregos.ELEGIVEL,
+        SituacaoItemFilaEmpregos.ELEGIVEL,
+        SituacaoItemFilaEmpregos.DUPLICADA,  # cópia idêntica no mesmo site
+    ]
+
+
+def test_sites_diferentes_com_o_mesmo_comeco_sao_a_mesma_vaga() -> None:
+    itens = _deduplicar_itens(
+        (
+            _item_com_payload(dominio="loja.com.br", descricao=COMECO_IGUAL + "Turno 12h-20h."),
+            _item_com_payload(
+                dominio="agregador.com.br", descricao=COMECO_IGUAL + "Informações adicionais."
+            ),
+        )
+    )
+
+    assert itens[1].situacao is SituacaoItemFilaEmpregos.DUPLICADA
+
+
+def test_publicada_do_mesmo_site_com_descricao_diferente_nao_barra() -> None:
+    """Contra o que já está no ar vale a mesma regra do mesmo site."""
+
+    empresa, anuncio, vaga, alvo = criar_cenario()
+    assinatura = _assinatura_da_vaga_pronta(empresa, anuncio, vaga, alvo)
+    mesma_origem = _publicada_em_outro_site(assinatura).model_copy(
+        update={
+            "dominio_origem": "tecnologia-atlas.example.com",
+            "assinatura_descricao_completa": "d" * 64,
+        }
+    )
+
+    resultado = preparar_fila_empregos(
+        [anuncio],
+        alvos={alvo.alvo_id: alvo},
+        repositorio_empresas=RepositorioEmpresasFalso(empresa),
+        repositorio_vagas=RepositorioVagasFalso(vaga),
+        repositorio_publicacoes=RepositorioPublicacoesFalso(None, mesma_origem),
+        momento_referencia=AGORA,
+    )
+
+    assert resultado.itens[0].situacao is SituacaoItemFilaEmpregos.ELEGIVEL
+
+
+def test_deduplicacao_no_lote_ignora_html_acento_e_formato_do_local() -> None:
+    """Diferenças que não mudam a vaga não escapam da comparação no lote."""
+
+    def criar_item(titulo: str, local: str) -> ItemFilaEmpregos:
+        return ItemFilaEmpregos(
+            anuncio_id=uuid4(),
+            titulo=titulo,
+            alvo_id="fonte",
+            empresa_id=uuid4(),
+            vaga_id=uuid4(),
+            situacao=SituacaoItemFilaEmpregos.ELEGIVEL,
+            preparacao=SimpleNamespace(
+                payload={
+                    "title": titulo,
+                    "company": {"name": "Assaí Atacadista"},
+                    "location": {"address": local},
+                    "description": "Atividades da vaga.",
+                }
+            ),
+        )
+
+    itens = _deduplicar_itens(
+        (
+            criar_item("Farmacêutico – Loja", "São Paulo, SP"),
+            criar_item("Farmaceutico &#8211; Loja", "SP - Sao Paulo, Brasil"),
+            criar_item("Farmacêutico – Loja", "Campinas, SP"),
+        )
+    )
+
+    assert [item.situacao for item in itens] == [
+        SituacaoItemFilaEmpregos.ELEGIVEL,
+        SituacaoItemFilaEmpregos.DUPLICADA,
+        SituacaoItemFilaEmpregos.ELEGIVEL,
+    ]
+
+
 def test_deduplicacao_remove_mesma_vaga_vinda_de_duas_fontes() -> None:
     """A mesma vaga com crédito de fontes diferentes só gera um payload."""
 
@@ -259,6 +476,7 @@ def test_deduplicacao_remove_mesma_vaga_vinda_de_duas_fontes() -> None:
             situacao=SituacaoItemFilaEmpregos.ELEGIVEL,
             preparacao=SimpleNamespace(
                 payload={
+                    "title": "Analista de Dados",
                     "company": {"name": "Empresa Exemplo"},
                     "location": {"address": "São Paulo, SP"},
                     "description": descricao,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from types import SimpleNamespace
 from typing import cast
@@ -9,6 +11,7 @@ from uuid import UUID
 
 import pytest
 
+from observatorio_vagas.domain.assinatura_vaga import identidade_de_payload
 from observatorio_vagas.domain.elegibilidade import (
     ResultadoElegibilidadePublicacao,
 )
@@ -28,6 +31,7 @@ from observatorio_vagas.integrations.empregos.preparacao import (
 from observatorio_vagas.integrations.empregos.publicador import (
     OperacaoPublicacaoEmpregosBloqueada,
     PublicadorEmpregos,
+    VagaJaPublicadaPorOutraFonte,
 )
 from observatorio_vagas.storage.contracts import ResultadoReservaPublicacao
 
@@ -124,11 +128,26 @@ class RepositorioFalso:
 
     eventos: list[str]
     operacao: OperacaoPublicacaoEmpregos | None = None
+    # Publicações de outros anúncios já no ar (mesma vaga vinda de outro site).
+    outras_publicadas: tuple[OperacaoPublicacaoEmpregos, ...] = ()
+    travas_obtidas: int = 0
+    dentro_da_trava: bool = False
+
+    @contextmanager
+    def trava_publicacao(self) -> Iterator[None]:
+        self.travas_obtidas += 1
+        self.dentro_da_trava = True
+        try:
+            yield
+        finally:
+            self.dentro_da_trava = False
 
     def reservar(
         self,
         operacao: OperacaoPublicacaoEmpregos,
     ) -> ResultadoReservaPublicacao:
+        # Conferir e reservar precisam acontecer sob a trava.
+        assert self.dentro_da_trava
         self.eventos.append("reservar")
 
         if self.operacao is None:
@@ -159,6 +178,15 @@ class RepositorioFalso:
             return self.operacao
         return None
 
+    def listar_ativas_por_assinatura(
+        self, assinatura_conteudo: str
+    ) -> list[OperacaoPublicacaoEmpregos]:
+        return [
+            operacao
+            for operacao in (self.operacao, *self.outras_publicadas)
+            if operacao is not None and operacao.assinatura_conteudo == assinatura_conteudo
+        ]
+
     def listar_por_vaga(
         self,
         vaga_id: UUID,
@@ -188,6 +216,52 @@ def criar_publicador(
     return PublicadorEmpregos(cliente, repositorio), cliente, repositorio, eventos
 
 
+def test_publicacao_grava_a_assinatura_de_conteudo() -> None:
+    """Sem a assinatura gravada, a cópia de outro site não seria reconhecida depois."""
+
+    publicador, _, repositorio, _ = criar_publicador(
+        resultado_real=criar_resultado(SituacaoEnvioEmpregos.SUCESSO, status_http=201)
+    )
+    publicador.publicar(
+        criar_preparacao(), vaga_id=VAGA_ID, anuncio_id=ANUNCIO_ID, confirmar_publicacao=True
+    )
+
+    identidade = identidade_de_payload(PAYLOAD, dominio=None)
+    assert repositorio.operacao is not None
+    assert repositorio.operacao.assinatura_conteudo == identidade.assinatura
+    assert repositorio.operacao.assinatura_descricao_completa == identidade.assinatura_completa
+
+
+def test_mesma_vaga_ja_publicada_por_outro_anuncio_nao_e_enviada() -> None:
+    """Última barreira: vale também para quem publica sem passar pela fila."""
+
+    publicador, cliente, repositorio, eventos = criar_publicador(
+        resultado_real=criar_resultado(SituacaoEnvioEmpregos.SUCESSO, status_http=201)
+    )
+    identidade = identidade_de_payload(PAYLOAD, dominio=None)
+    repositorio.outras_publicadas = (
+        OperacaoPublicacaoEmpregos(
+            vaga_id=UUID("b1000000-0000-4000-8000-0000000000b1"),
+            anuncio_id=UUID("b2000000-0000-4000-8000-0000000000b2"),
+            external_job_posting_id="outro-site:VAGA-9",
+            operation_type="CREATE",
+            payload_sha256="b" * 64,
+            assinatura_conteudo=identidade.assinatura,
+        ),
+    )
+
+    with pytest.raises(VagaJaPublicadaPorOutraFonte):
+        publicador.publicar(
+            criar_preparacao(), vaga_id=VAGA_ID, anuncio_id=ANUNCIO_ID, confirmar_publicacao=True
+        )
+
+    assert cliente.envios_reais == 0
+    assert "reservar" not in eventos
+    # A conferência aconteceu sob a trava, e ela foi liberada depois do erro.
+    assert repositorio.travas_obtidas == 1
+    assert repositorio.dentro_da_trava is False
+
+
 def test_simulacao_nao_grava_historico() -> None:
     """O comportamento padrão continua sem rede e sem MongoDB."""
 
@@ -201,6 +275,7 @@ def test_simulacao_nao_grava_historico() -> None:
     assert resultado.simulada is True
     assert cliente.envios_reais == 0
     assert repositorio.operacao is None
+    assert repositorio.travas_obtidas == 0
     assert eventos == ["simular"]
 
 

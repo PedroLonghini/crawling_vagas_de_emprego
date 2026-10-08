@@ -15,7 +15,8 @@ Não é objetivo:
 
 - publicar automaticamente sem revisão e confirmação;
 - burlar login, CAPTCHA, WAF, `robots.txt` ou limite de sites;
-- seguir Gupy, Catho, Indeed, InfoJobs/Pandapé ou fontes com proibição
+- seguir domínios bloqueados (lista vigente em `domain/politica_fonte.py`: Gupy,
+  Catho, Indeed, InfoJobs/Pandapé, Vagas.com, empregandobrasil etc.) ou fontes com proibição
   explícita de republicação;
 - publicar concursos públicos ou vagas fora do Brasil.
 

@@ -9,7 +9,10 @@ from __future__ import annotations
 import argparse
 from collections.abc import Sequence
 from dataclasses import dataclass
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, time
+from typing import Any
+
+from pymongo.errors import PyMongoError
 
 from observatorio_vagas.config import get_settings
 from observatorio_vagas.domain.anuncio import AnuncioVaga
@@ -57,7 +60,48 @@ def criar_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="autoriza atualizar o status dos anúncios no MongoDB",
     )
+    parser.add_argument(
+        "--todos",
+        action="store_true",
+        help=(
+            "procura no banco inteiro (consulta direta por data de expiração), sem o "
+            "limite de 10.000 anúncios mais recentes; usado pela varredura semanal"
+        ),
+    )
     return parser
+
+
+def encerrar_todos_expirados(
+    colecao: Any,
+    *,
+    confirmar: bool,
+    momento_referencia: datetime,
+) -> ResultadoEncerramento:
+    """Uma consulta só, no banco inteiro: validade anterior ao dia de hoje (UTC).
+
+    Data sem horário vale o dia inteiro (mesma regra de ``esta_expirado``); com
+    horário, a vaga fecha no dia seguinte ao vencimento, o que é conservador.
+    """
+
+    inicio_do_dia = datetime.combine(momento_referencia.date(), time.min, tzinfo=UTC)
+    filtro = {
+        "expira_em": {"$lt": inicio_do_dia},
+        "status": {"$ne": StatusAnuncio.ENCERRADO.value},
+    }
+    expirados = colecao.count_documents(filtro)
+    atualizados = (
+        colecao.update_many(
+            filtro, {"$set": {"status": StatusAnuncio.ENCERRADO.value}}
+        ).modified_count
+        if confirmar and expirados
+        else expirados
+    )
+    return ResultadoEncerramento(
+        avaliados=expirados,
+        expirados=expirados,
+        atualizados=atualizados,
+        ja_encerrados=0,
+    )
 
 
 def esta_expirado(
@@ -126,9 +170,7 @@ def encerrar_expirados(
             continue
 
         if confirmar:
-            repositorio.salvar(
-                anuncio.model_copy(update={"status": StatusAnuncio.ENCERRADO})
-            )
+            repositorio.salvar(anuncio.model_copy(update={"status": StatusAnuncio.ENCERRADO}))
         atualizados += 1
 
     return ResultadoEncerramento(
@@ -147,20 +189,27 @@ def executar(argumentos: list[str] | None = None) -> int:
     try:
         configuracoes = get_settings()
         with ConexaoMongoDB(configuracoes) as conexao:
-            repositorio = RepositorioAnunciosMongoDB(conexao.banco)
-            anuncios = carregar_anuncios(
-                repositorio,
-                alvo_id=opcoes.alvo_id,
-                limite=opcoes.limite,
-            )
-            resultado = encerrar_expirados(
-                anuncios,
-                repositorio=repositorio,
-                confirmar=opcoes.confirmar,
-                momento_referencia=agora_utc(),
-            )
+            if opcoes.todos:
+                resultado = encerrar_todos_expirados(
+                    conexao.banco["anuncios"],
+                    confirmar=opcoes.confirmar,
+                    momento_referencia=agora_utc(),
+                )
+            else:
+                repositorio = RepositorioAnunciosMongoDB(conexao.banco)
+                anuncios = carregar_anuncios(
+                    repositorio,
+                    alvo_id=opcoes.alvo_id,
+                    limite=opcoes.limite,
+                )
+                resultado = encerrar_expirados(
+                    anuncios,
+                    repositorio=repositorio,
+                    confirmar=opcoes.confirmar,
+                    momento_referencia=agora_utc(),
+                )
 
-    except (ErroConexaoMongoDB, ErroRepositorioAnunciosMongoDB, ValueError) as erro:
+    except (ErroConexaoMongoDB, ErroRepositorioAnunciosMongoDB, PyMongoError, ValueError) as erro:
         print(f"ERRO: {erro}")
         return 1
 

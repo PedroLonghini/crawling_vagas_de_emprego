@@ -174,6 +174,88 @@ def test_limite_adia_elegiveis_excedentes() -> None:
     assert len(publicador.chamadas) == 2
 
 
+def test_duplicada_e_ignorada_sem_falha_e_sem_ocupar_o_limite() -> None:
+    """Repetida não é falha (o script sairia com erro) nem toma lugar de vaga nova."""
+
+    duplicadas = tuple(
+        ItemFilaEmpregos(
+            anuncio_id=_uuid(10 + numero),
+            vaga_id=_uuid(110 + numero),
+            empresa_id=None,
+            alvo_id="agregador",
+            titulo="Vaga repetida",
+            situacao=SituacaoItemFilaEmpregos.DUPLICADA,
+            bloqueios=(
+                MotivoFilaEmpregos(
+                    codigo="duplicada_de_vaga_publicada",
+                    mensagem="Mesma vaga já publicada.",
+                ),
+            ),
+        )
+        for numero in range(3)
+    )
+    novas = (_item_elegivel(1), _item_elegivel(2))
+    publicador = PublicadorFalso()
+
+    resultado = publicar_fila_empregos(
+        ResultadoFilaEmpregos((*duplicadas, *novas)),
+        publicador=publicador,
+        limite_envios=2,
+    )
+
+    assert [item.situacao for item in resultado.itens] == [
+        *([SituacaoResultadoLoteEmpregos.IGNORADA_DUPLICADA] * 3),
+        SituacaoResultadoLoteEmpregos.SIMULADA,
+        SituacaoResultadoLoteEmpregos.SIMULADA,
+    ]
+    assert resultado.falhas == ()
+    assert len(resultado.ignoradas) == 3
+    assert len(publicador.chamadas) == 2
+
+
+def test_duplicada_descoberta_no_envio_nao_vira_falha_nem_gasta_limite() -> None:
+    """Outra execução publicou a mesma vaga entre a fila e o envio."""
+
+    from observatorio_vagas.integrations.empregos.publicador import (
+        VagaJaPublicadaPorOutraFonte,
+    )
+
+    itens = tuple(_item_elegivel(numero) for numero in range(1, 4))
+    publicada = _operacao_sucesso(_item_elegivel(9))
+    publicador = PublicadorFalso(
+        erros={itens[0].anuncio_id: VagaJaPublicadaPorOutraFonte(publicada)}
+    )
+
+    resultado = publicar_fila_empregos(
+        ResultadoFilaEmpregos(itens), publicador=publicador, limite_envios=2
+    )
+
+    assert [item.situacao for item in resultado.itens] == [
+        SituacaoResultadoLoteEmpregos.IGNORADA_DUPLICADA,
+        SituacaoResultadoLoteEmpregos.SIMULADA,
+        SituacaoResultadoLoteEmpregos.SIMULADA,
+    ]
+    assert resultado.falhas == ()
+
+
+def test_trava_ocupada_adia_o_resto_do_lote() -> None:
+    """Esperar 60 s por item não ajuda: o resto fica para a próxima execução."""
+
+    from observatorio_vagas.storage.mongodb.publicacoes import TravaPublicacaoOcupada
+
+    itens = tuple(_item_elegivel(numero) for numero in range(1, 4))
+    publicador = PublicadorFalso(erros={itens[0].anuncio_id: TravaPublicacaoOcupada("ocupada")})
+
+    resultado = publicar_fila_empregos(ResultadoFilaEmpregos(itens), publicador=publicador)
+
+    assert [item.situacao for item in resultado.itens] == [
+        SituacaoResultadoLoteEmpregos.FALHA,
+        SituacaoResultadoLoteEmpregos.ADIADA_LIMITE,
+        SituacaoResultadoLoteEmpregos.ADIADA_LIMITE,
+    ]
+    assert len(publicador.chamadas) == 1
+
+
 def test_falha_confirmada_nao_interrompe_proxima_vaga() -> None:
     """Uma resposta ruim deve ficar isolada no item que a produziu."""
 

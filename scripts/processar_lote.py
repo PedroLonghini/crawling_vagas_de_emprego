@@ -239,6 +239,21 @@ def criar_parser() -> argparse.ArgumentParser:
     )
 
     parser.add_argument(
+        "--estado",
+        default="lote",
+        help=(
+            "nome do registro de estado em <pasta do catálogo>/.cache/ (padrão: lote, o da "
+            "rotina diária). A varredura semanal usa 'semanal', separado da diária"
+        ),
+    )
+    parser.add_argument(
+        "--sem-agendamento",
+        action="store_true",
+        help=(
+            "coleta todas as fontes, sem adiar as que não trouxeram vaga nova (varredura semanal)"
+        ),
+    )
+    parser.add_argument(
         "--janela-horas",
         type=int,
         default=None,
@@ -481,6 +496,7 @@ def _executar_crawler(
     janela_horas: int | None = None,
     limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
+    agendamento: bool = True,
 ) -> int:
     """Executa uma coleta limitada a um fragmento do catálogo."""
 
@@ -518,6 +534,9 @@ def _executar_crawler(
             *(("-a", f"limite_navegacao={limite_navegacao}") if limite_navegacao else ()),
             *(("-a", f"urls_conhecidas={urls_conhecidas}") if urls_conhecidas else ()),
             *(("-a", f"limite_anuncios={limite_anuncios}") if limite_anuncios is not None else ()),
+            # Varredura semanal: todas as fontes, sem o adiamento das que não
+            # trouxeram vaga nova (o adiamento é da rotina diária).
+            *(() if agendamento else ("-a", "usar_agendamento_inteligente=false")),
             # Sem isto o estado ficava ao lado do catálogo temporário do bloco e
             # era apagado no fim: todo dia virava uma coleta completa.
             *(
@@ -630,6 +649,7 @@ def _coletar_em_blocos(
     janela_horas: int | None = None,
     limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
+    agendamento: bool = True,
 ) -> dict[str, int]:
     """Coleta blocos em paralelo, isolando cada domínio em uma única fila."""
 
@@ -653,6 +673,7 @@ def _coletar_em_blocos(
             janela_horas=janela_horas,
             limite_navegacao=limite_navegacao,
             urls_conhecidas=urls_conhecidas,
+            agendamento=agendamento,
         )
 
     falhas: dict[str, int] = {}
@@ -671,6 +692,7 @@ def _coletar_em_blocos(
                 janela_horas=janela_horas,
                 limite_navegacao=limite_navegacao,
                 urls_conhecidas=urls_conhecidas,
+                agendamento=agendamento,
             ): numero
             for numero, fila in ativas
         }
@@ -765,6 +787,7 @@ def _coletar_fila_em_blocos(
     janela_horas: int | None = None,
     limite_navegacao: int | None = None,
     urls_conhecidas: Path | None = None,
+    agendamento: bool = True,
 ) -> dict[str, int]:
     """Executa uma fila de domínios de forma sequencial e recuperável."""
 
@@ -795,6 +818,7 @@ def _coletar_fila_em_blocos(
                 janela_horas=janela_horas,
                 limite_navegacao=limite_navegacao,
                 urls_conhecidas=urls_conhecidas,
+                agendamento=agendamento,
                 javascript=javascript,
                 catalogo=caminho_bloco,
                 etiqueta=f"BLOCO {numero_bloco}/{len(blocos)}",
@@ -829,6 +853,7 @@ def _coletar_fila_em_blocos(
                     janela_horas=janela_horas,
                     limite_navegacao=limite_navegacao,
                     urls_conhecidas=urls_conhecidas,
+                    agendamento=agendamento,
                     javascript=javascript,
                     catalogo=caminho_alvo,
                     etiqueta=f"ALVO ISOLADO {alvo.alvo_id}",
@@ -1367,7 +1392,8 @@ def executar(
             diretorio_cadernos=diretorio_cadernos,
             # Um arquivo de estado por fila: as filas rodam em paralelo e cada
             # uma regrava o seu inteiro; compartilhar um só perderia dados.
-            diretorio_estado=catalogo.parent / ".cache" / "lote",
+            diretorio_estado=catalogo.parent / ".cache" / opcoes.estado,
+            agendamento=not opcoes.sem_agendamento,
             javascript=opcoes.javascript,
             alvos=executaveis,
             tamanho_bloco=opcoes.alvos_por_coleta,

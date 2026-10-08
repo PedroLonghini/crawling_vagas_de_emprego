@@ -35,7 +35,10 @@ há informações suficientes para isso.
   técnicos. Ele não tenta contornar CAPTCHA, WAF ou proibições explícitas.
 - Coletar uma vaga não significa que ela pode ser republicada. A publicação
   depende da política e da autorização registrada para a fonte.
-- URLs de Gupy, Indeed, Catho e InfoJobs/Pandapé são recusadas.
+- URLs de domínios bloqueados (Empregos, Indeed, InfoJobs/Pandapé, Catho, Bluy,
+  Cia de Estágios, Vagas.com, NIC.br, empregandobrasil.com.br e Gupy) são
+  recusadas na coleta e na publicação. A lista completa e vigente está em
+  `src/observatorio_vagas/domain/politica_fonte.py`.
 - Nenhum comando publica no Empregos por acidente. A publicação exige uma
   confirmação própria e configuração válida no `.env`.
 
@@ -68,6 +71,14 @@ https://jobs.lever.co/empresa
 Adicione uma página de carreiras por linha. O sistema cria automaticamente o
 identificador, nome provisório, tipo de fonte e limite inicial seguro. Uma nova
 fonte pode ser coletada, mas só entra nos payloads após sua aprovação.
+
+Fluxo atual de autorização (07/10/2026): a aprovação não é feita fonte a fonte.
+O usuário cola as URLs que autoriza no fim de `catalogo_fontes.csv` e de
+`fontes_autorizadas.csv` (hoje em `config/lote_10mil/`, ~14.450 URLs) e roda
+`scripts/triar_catalogo.py`, que gera o catálogo usado nas coletas
+(`config/lote_10mil_triado/catalogo_fontes.csv`, ~12.140 URLs). A fila de
+publicação usa `--somente-catalogo` com esse catálogo triado. Quem decide o que
+é autorizado é o usuário; domínios bloqueados são sempre recusados.
 
 Mais detalhes: [config/README.md](config/README.md).
 

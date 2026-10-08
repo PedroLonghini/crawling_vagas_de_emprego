@@ -19,11 +19,15 @@ publicação enquanto estiver `pending`, `restritiva` ou `bloqueada`.
 4. **Aprovação.** Revisar uma amostra de anúncios extraídos: título, empresa,
    localidade, descrição, data e URL de candidatura; confirmar que não há
    concursos/editais nem dados pessoais indevidos.
-5. **Ativação rastreável.** Só então criar ou alterar a linha correspondente
-   em `config/catalogo_fontes.csv` com `ativa=true`,
-   `status_politica=aprovada`, licença, URL de evidência e
-   `republicacao_permitida=true`. Os testes do catálogo recusam qualquer fonte
-   ativa que não satisfaça essa política.
+5. **Ativação rastreável.** Só então colar a URL no catálogo de coleta
+   (`config/catalogo_fontes.csv`, que hoje tem só a coluna `url`) e em
+   `config/fontes_autorizadas.csv`, e registrar a evidência (licença, URL oficial
+   e trecho) e a decisão em `config/fila_prospeccao_fontes.csv` (colunas
+   `url_termos_ou_licenca`, `evidencia_observada`, `decisao`). As colunas
+   `ativa`, `status_politica` e `republicacao_permitida` citadas em versões
+   antigas deste documento não existem mais nos CSVs. Quem decide a
+   autorização é o usuário; a política de domínios bloqueados continua valendo
+   (`domain/politica_fonte.py`).
 
 ## Estados da fila
 

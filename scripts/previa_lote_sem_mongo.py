@@ -63,6 +63,9 @@ class _SemPublicacoes:
     def buscar_por_chave(self, chave: str) -> None:
         return None
 
+    def listar_ativas_por_assinatura(self, assinatura_conteudo: str) -> list:
+        return []
+
 
 def _extrair_alvo(diretorio_raw: str, registros: list, alvo_id: str, cache: str | None):
     return extrair_parcial(

@@ -21,10 +21,11 @@ sem termo de reutilização ou sem confirmação técnica não foram ativadas.
 
 ## Candidatas não ativadas
 
-As quatro candidatas abaixo foram incluídas no inventário central
-`config/catalogo_fontes.csv` com `ativa=false`, `status_politica=pendente` e
-`republicacao_permitida=false`. Assim são rastreáveis, mas o crawler e a
-publicação não podem usá-las até a confirmação indicada em cada caso.
+As quatro candidatas abaixo ficam apenas no inventário de pesquisa
+`config/fila_prospeccao_fontes.csv` (coluna `decisao`). O
+`config/catalogo_fontes.csv` tem só a coluna `url` e não distingue estado:
+**não cole a URL de uma candidata no catálogo** antes da confirmação indicada em
+cada caso, porque ela passaria a ser coletável.
 
 ### SETE Amapá — Secretaria de Estado do Trabalho e Empreendedorismo
 

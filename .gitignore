@@ -70,3 +70,8 @@ dist/
 # Dados grandes gerados pelo scraper
 dados/
 data/
+
+# Listas licenciadas do usuário: nunca vão para o git (copiar à mão entre máquinas)
+config/lote_10mil/
+config/lote_10mil_triado/
+config/lote_1000_novo/

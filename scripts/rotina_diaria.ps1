@@ -28,6 +28,15 @@ if ($LASTEXITCODE -ne 0) {
     exit 1
 }
 
+# A varredura semanal (ou outra coleta) rodando ao mesmo tempo disputaria os
+# mesmos sites e o MongoDB: a diária fica para o dia seguinte.
+$emAndamento = Get-CimInstance Win32_Process -Filter "Name='python.exe'" |
+    Where-Object { $_.CommandLine -like '*processar_lote.py*' -or $_.CommandLine -like '*rotina_semanal.py*' }
+if ($emAndamento) {
+    Registrar "PULADA: a varredura semanal (ou outra coleta) está rodando. Nada foi coletado."
+    exit 0
+}
+
 # 2. Coleta das últimas 24h, até 200 vagas por fonte.
 $inicio = Get-Date
 & $python scripts\processar_lote.py --catalogo config\lote_10mil_triado\catalogo_fontes.csv --coletar --confirmar `

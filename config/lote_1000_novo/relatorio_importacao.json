@@ -1,0 +1,33 @@
+{
+  "entrada": "C:\\Users\\Inspirion\\Documents\\urls_1000_amostra.txt",
+  "linhas_com_url": 1002,
+  "urls_prontas_para_coleta_e_publicacao": 997,
+  "urls_rejeitadas": 5,
+  "rejeitadas": [
+    {
+      "linha": 53,
+      "url": "https://www.empregos.com.br/vaga/11603747/analista-de-manutencao-pavimentos-congonhas-em-sao-paulo-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 497,
+      "url": "https://www.empregos.com.br/vaga/11732027/inspetor-de-medicao-de-espessura-em-tres-lagoas-ms",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 642,
+      "url": "https://www.empregos.com.br/profissao/acustico",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 698,
+      "url": "https://www.empregos.com.br/vaga/11715615/pesquisador-i-farmacotecnico-em-toledo-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 993,
+      "url": "https://www.empregos.com.br/empresa/vix-logistica/e-115160",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    }
+  ]
+}

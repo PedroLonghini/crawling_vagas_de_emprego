@@ -3,7 +3,11 @@
 from __future__ import annotations
 
 import re
-from uuid import UUID
+import time
+from collections.abc import Iterator
+from contextlib import contextmanager, suppress
+from datetime import UTC, datetime, timedelta
+from uuid import UUID, uuid4
 
 from pymongo import DESCENDING, ReturnDocument
 from pymongo.collection import Collection
@@ -21,6 +25,19 @@ from observatorio_vagas.storage.mongodb.schema import (
     COLECAO_PUBLICACOES_EMPREGOS,
 )
 
+COLECAO_TRAVAS = "travas"
+NOME_TRAVA_PUBLICACAO = "publicacao_empregos"
+VALIDADE_TRAVA_PUBLICACAO = timedelta(minutes=2)
+ESPERA_MAXIMA_TRAVA_S = 60.0
+INTERVALO_TENTATIVA_TRAVA_S = 0.5
+
+SITUACOES_NO_AR = (
+    SituacaoPublicacaoEmpregos.PREPARADA,
+    SituacaoPublicacaoEmpregos.ENVIANDO,
+    SituacaoPublicacaoEmpregos.SUCESSO,
+    SituacaoPublicacaoEmpregos.INDETERMINADA,
+)
+
 
 class ErroRepositorioPublicacoesMongoDB(RuntimeError):
     """Erro seguro durante o acesso ao histórico de publicações."""
@@ -34,13 +51,66 @@ class TransicaoPublicacaoMongoDBInvalida(ErroRepositorioPublicacoesMongoDB):
     """Outro processo alterou o estado antes desta transição."""
 
 
+class TravaPublicacaoOcupada(ErroRepositorioPublicacoesMongoDB):
+    """Outro processo está conferindo e reservando uma publicação agora."""
+
+
 class RepositorioPublicacoesEmpregosMongoDB:
     """Reserva e atualiza publicações sem duplicar uma operação lógica."""
 
     def __init__(self, banco: Database) -> None:
         """Seleciona a coleção sem executar consultas."""
 
+        self._banco = banco
         self._colecao: Collection = banco[COLECAO_PUBLICACOES_EMPREGOS]
+
+    @contextmanager
+    def trava_publicacao(self) -> Iterator[None]:
+        """Só um processo por vez confere duplicadas e reserva uma publicação.
+
+        Sem isto, duas execuções simultâneas (rotina e manual, duas janelas)
+        podiam conferir a mesma vaga ao mesmo tempo, não achar a outra e
+        publicar as duas cópias. A trava vence sozinha depois de
+        ``VALIDADE_TRAVA_PUBLICACAO``, para não ficar presa se o processo cair.
+        """
+
+        # A coleção da trava só é selecionada aqui: quem só consulta não a usa.
+        travas: Collection = self._banco[COLECAO_TRAVAS]
+        dono = uuid4().hex
+        prazo = time.monotonic() + ESPERA_MAXIMA_TRAVA_S
+        while True:
+            agora = datetime.now(UTC)
+            try:
+                # Com o documento existindo e ocupado, o filtro não casa e o
+                # upsert tenta inserir o mesmo _id: DuplicateKeyError = ocupada.
+                travas.update_one(
+                    {
+                        "_id": NOME_TRAVA_PUBLICACAO,
+                        "$or": [{"dono": None}, {"expira_em": {"$lt": agora}}],
+                    },
+                    {"$set": {"dono": dono, "expira_em": agora + VALIDADE_TRAVA_PUBLICACAO}},
+                    upsert=True,
+                )
+                break
+            except DuplicateKeyError:
+                if time.monotonic() >= prazo:
+                    raise TravaPublicacaoOcupada(
+                        "outra publicação está em andamento; tente de novo em instantes"
+                    ) from None
+                time.sleep(INTERVALO_TENTATIVA_TRAVA_S)
+            except PyMongoError as erro_original:
+                raise ErroRepositorioPublicacoesMongoDB(
+                    "não foi possível obter a trava de publicação"
+                ) from erro_original
+        try:
+            yield
+        finally:
+            # Se a liberação falhar, a trava vence sozinha; não esconder o erro original.
+            with suppress(PyMongoError):
+                travas.update_one(
+                    {"_id": NOME_TRAVA_PUBLICACAO, "dono": dono},
+                    {"$set": {"dono": None, "expira_em": None}},
+                )
 
     def reservar(
         self,
@@ -172,6 +242,57 @@ class RepositorioPublicacoesEmpregosMongoDB:
             return None
 
         return documento_para_modelo(documento, OperacaoPublicacaoEmpregos)
+
+    def listar_ativas_por_assinatura(
+        self,
+        assinatura_conteudo: str,
+    ) -> list[OperacaoPublicacaoEmpregos]:
+        """Publicações ainda no ar com a mesma assinatura (a mais antiga primeiro).
+
+        Rejeitada pela API não conta. Enquanto não existir a remoção pela API,
+        toda operação não rejeitada é tratada como no ar (inclusive preparada,
+        em envio ou indeterminada: na dúvida, não publicar de novo). Quem
+        chama decide, com ``encontrar_publicacao_da_mesma_vaga``, se é a mesma
+        vaga (mesmo site exige a descrição inteira igual).
+        """
+
+        assinatura = assinatura_conteudo.strip().casefold()
+
+        if re.fullmatch(r"[0-9a-f]{64}", assinatura) is None:
+            raise ValueError("assinatura_conteudo deve ser um SHA-256 hexadecimal")
+
+        try:
+            cursor = self._colecao.find(
+                {
+                    "assinatura_conteudo": assinatura,
+                    "situacao": {"$in": [s.value for s in SITUACOES_NO_AR]},
+                }
+            ).sort("criado_em", 1)
+            return [
+                documento_para_modelo(documento, OperacaoPublicacaoEmpregos) for documento in cursor
+            ]
+        except PyMongoError as erro_original:
+            raise ErroRepositorioPublicacoesMongoDB(
+                "não foi possível consultar a publicação"
+            ) from erro_original
+
+    def listar_no_ar(
+        self,
+        situacoes: tuple[SituacaoPublicacaoEmpregos, ...] = SITUACOES_NO_AR,
+    ) -> list[OperacaoPublicacaoEmpregos]:
+        """Todas as publicações que ainda contam como no ar (varredura semanal)."""
+
+        try:
+            cursor = self._colecao.find({"situacao": {"$in": [s.value for s in situacoes]}}).sort(
+                "criado_em", 1
+            )
+            return [
+                documento_para_modelo(documento, OperacaoPublicacaoEmpregos) for documento in cursor
+            ]
+        except PyMongoError as erro_original:
+            raise ErroRepositorioPublicacoesMongoDB(
+                "não foi possível listar as publicações no ar"
+            ) from erro_original
 
     def listar_por_vaga(
         self,

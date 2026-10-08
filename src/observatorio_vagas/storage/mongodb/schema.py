@@ -247,6 +247,14 @@ INDICES_POR_COLECAO: dict[str, tuple[IndexModel, ...]] = {
             ],
             name="ix_publicacoes_empregos_situacao_atualizacao",
         ),
+        # Mesma vaga vinda de outro site: consultada antes de cada publicação.
+        IndexModel(
+            [
+                ("assinatura_conteudo", ASCENDING),
+                ("situacao", ASCENDING),
+            ],
+            name="ix_publicacoes_empregos_assinatura",
+        ),
     ),
 }
 

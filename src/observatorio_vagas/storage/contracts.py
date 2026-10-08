@@ -7,6 +7,7 @@ from __future__ import annotations
 # Aceita lista e tupla sem obrigar o crawler a usar
 # somente um tipo específico de coleção.
 from collections.abc import Sequence
+from contextlib import AbstractContextManager
 
 # dataclass cria uma classe simples usada para transportar resultados.
 from dataclasses import dataclass
@@ -284,6 +285,19 @@ class RepositorioPublicacoesEmpregos(Protocol):
         chave_idempotencia: str,
     ) -> OperacaoPublicacaoEmpregos | None:
         """Procura uma operação por sua identidade lógica."""
+
+        ...
+
+    def trava_publicacao(self) -> AbstractContextManager[None]:
+        """Exclusividade entre conferir duplicadas e reservar uma publicação."""
+
+        ...
+
+    def listar_ativas_por_assinatura(
+        self,
+        assinatura_conteudo: str,
+    ) -> list[OperacaoPublicacaoEmpregos]:
+        """Publicações ainda no ar com a mesma assinatura de conteúdo."""
 
         ...
 

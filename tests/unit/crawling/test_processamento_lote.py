@@ -544,6 +544,24 @@ def test_estado_incremental_vai_para_o_crawler_e_e_um_por_fila(tmp_path, monkeyp
     assert processar_lote._arquivo_estado(None, 2) is None
 
 
+def test_varredura_semanal_coleta_todas_as_fontes_sem_adiamento(tmp_path, monkeypatch):
+    """A diária adia fontes sem novidade; a varredura semanal não pode adiar nenhuma."""
+
+    chamadas = []
+    monkeypatch.setattr(
+        processar_lote, "_executar_python", lambda **kwargs: chamadas.append(kwargs) or 0
+    )
+
+    processar_lote._executar_crawler(catalogo=tmp_path / "c.csv", etiqueta="d", limite_respostas=10)
+    processar_lote._executar_crawler(
+        catalogo=tmp_path / "c.csv", etiqueta="s", limite_respostas=10, agendamento=False
+    )
+
+    diaria, semanal = (chamada["argumentos"] for chamada in chamadas)
+    assert "usar_agendamento_inteligente=false" not in diaria
+    assert semanal[semanal.index("usar_agendamento_inteligente=false") - 1] == "-a"
+
+
 def test_dominios_grandes_ficam_em_filas_separadas(tmp_path: Path) -> None:
     linhas = [
         f"a{n},Empresa,outra,https://grande{g}.example/vagas/{n},true,5,somente_coleta"

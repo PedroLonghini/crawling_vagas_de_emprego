@@ -252,6 +252,12 @@ class CatalogoFontesSpider(Spider):
         self.urls_listagem_agendadas: dict[str, set[str]] = {}
         self.detalhes_pendentes: dict[str, dict[str, None]] = {}
         self.navegacao_pendente: dict[str, dict[str, None]] = {}
+        # Por que a navegação de cada fonte parou; "limite_atingido" significa que
+        # a listagem não foi lida inteira (usado na detecção de vagas removidas).
+        self.motivos_fim_navegacao: dict[str, set[str]] = {}
+        self.listagens_respondidas: dict[str, set[str]] = {}
+        self.listagens_descartadas: Counter[str] = Counter()
+        self.listagens_inalteradas: Counter[str] = Counter()
         # Orçamento de listagens e sitemaps por fonte. O --limite-anuncios só limita
         # detalhes; sem isto cada fonte herdava 10.000 páginas de navegação (59% das
         # páginas do teste de 10 mil foram sitemaps).
@@ -526,6 +532,12 @@ class CatalogoFontesSpider(Spider):
             .split(";", maxsplit=1)[0],
             "bytes": len(response.body),
         }
+        if response.meta.get("observatorio_tipo_pagina") == "inicial":
+            # URL agendada e as anteriores a redirecionamentos: assim uma listagem
+            # que redirecionou não conta como "sem resposta".
+            self.listagens_respondidas.setdefault(alvo_id, set()).update(
+                (response.request.url, *response.meta.get("redirect_urls", ()))
+            )
         self.urls_visitadas.setdefault(alvo_id, set()).add(urldefrag(response.url)[0])
         if self.estado_incremental is not None:
             self.estado_incremental.registrar_resposta(alvo_id=alvo_id, resposta=response)
@@ -596,6 +608,7 @@ class CatalogoFontesSpider(Spider):
             )
         ):
             self.estado_incremental.confirmar_listagem_inalterada(alvo_id=alvo_id)
+            self.listagens_inalteradas[alvo_id] += 1
             self.logger.info(
                 "Fonte inalterada: alvo_id=%s status=%s; "
                 "detalhes reaproveitados da coleta anterior",
@@ -884,6 +897,7 @@ class CatalogoFontesSpider(Spider):
                 if len(agendadas) >= limite
                 else ("sem_links_adicionais" if not urls else "links_repetidos_ou_fora_do_dominio")
             )
+            self.motivos_fim_navegacao.setdefault(alvo_id, set()).add(motivo)
             self.logger.info("Fim da navegação: alvo_id=%s motivo=%s", alvo_id, motivo)
 
         # Entrega as requisições aprovadas ao Scrapy.
@@ -1064,6 +1078,27 @@ class CatalogoFontesSpider(Spider):
                         }
                     ),
                     "detalhes_reaproveitados": self.detalhes_reaproveitados[alvo_id],
+                    # Completude da listagem: a detecção de vagas removidas só
+                    # compara links de fontes lidas inteiras e sem janela.
+                    "janela_horas": self.janela_publicacao.horas,
+                    "janela_encerrada": self.janela_publicacao.encerrada(alvo_id),
+                    "limite_anuncios": self.limite_anuncios,
+                    "motivos_fim_navegacao": sorted(self.motivos_fim_navegacao.get(alvo_id, ())),
+                    "listagens_nao_visitadas": len(
+                        set(self.navegacao_pendente.get(alvo_id, {})) - agendadas
+                    ),
+                    # Agendadas que nunca responderam nem falharam (spider fechado
+                    # antes, por exemplo) e as descartadas no caminho (robots,
+                    # bloqueio do domínio, política).
+                    "listagens_sem_resposta": len(
+                        self.urls_listagem_agendadas.get(alvo_id, set())
+                        - self.listagens_respondidas.get(alvo_id, set())
+                        - resultados.keys()
+                    ),
+                    "listagens_descartadas": self.listagens_descartadas[alvo_id],
+                    # Listagem igual à da coleta anterior: o crawler para ali e não
+                    # vê as páginas seguintes nem os links que não baixou.
+                    "listagens_inalteradas": self.listagens_inalteradas[alvo_id],
                     "possiveis_encerradas": (
                         self.estado_incremental.possiveis_encerradas(alvo_id=alvo_id)
                         if self.estado_incremental is not None
@@ -1120,7 +1155,10 @@ class CatalogoFontesSpider(Spider):
             self._liberar_vaga_de_detalhe(alvo_id)
         if isinstance(getattr(falha, "value", None), IgnoreRequest):
             # Descartado de propósito (listagem esgotada, fonte encerrada, política):
-            # não conta como falha da fonte nem aciona o disjuntor.
+            # não conta como falha da fonte nem aciona o disjuntor. Listagem
+            # descartada, porém, significa que a fonte não foi lida inteira.
+            if falha.request.meta.get("observatorio_tipo_pagina") == "inicial":
+                self.listagens_descartadas[alvo_id] += 1
             return
         if self.estado_incremental is not None:
             self.estado_incremental.registrar_falha(alvo_id=alvo_id)

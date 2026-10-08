@@ -222,8 +222,10 @@ Concursos públicos não fazem parte do produto e são descartados antes da extr
 
 ## 9. Fontes e decisões conhecidas
 
-- **Gupy, Adzuna, Pandapé e portais similares** podem ser tecnicamente coletáveis, mas não
-  devem ser marcados como republicáveis sem licença/termo documentado.
+- **Gupy** está bloqueada na coleta e na publicação (`gupy.io` em
+  `domain/politica_fonte.py`, decisão de 06/10/2026). **Adzuna, Pandapé e portais
+  similares** podem ser tecnicamente coletáveis, mas não devem ser marcados como
+  republicáveis sem licença/termo documentado.
 - **Empregos.com.br** é o destino do produto, não fonte de produção. Ele pode ser usado como
   página controlada apenas em teste manual isolado; não deve entrar no catálogo operacional.
 - **NIC.br** possui adaptador dedicado (`extraction/nic_br.py`) e foi usado em teste isolado

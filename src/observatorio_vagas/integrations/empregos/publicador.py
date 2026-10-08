@@ -6,8 +6,12 @@ from dataclasses import dataclass
 from typing import Protocol
 from uuid import UUID
 
+from observatorio_vagas.domain.assinatura_vaga import identidade_de_payload
 from observatorio_vagas.domain.enums import SituacaoPublicacaoEmpregos
-from observatorio_vagas.domain.publicacao import OperacaoPublicacaoEmpregos
+from observatorio_vagas.domain.publicacao import (
+    OperacaoPublicacaoEmpregos,
+    encontrar_publicacao_da_mesma_vaga,
+)
 from observatorio_vagas.integrations.empregos.client import (
     AutenticacaoEmpregosRecusada,
     RequisicaoEmpregosRecusada,
@@ -50,6 +54,17 @@ class OperacaoPublicacaoEmpregosBloqueada(RuntimeError):
         super().__init__(
             "a operação de publicação já está "
             f"no estado {operacao.situacao.value} e exige reconciliação"
+        )
+
+
+class VagaJaPublicadaPorOutraFonte(RuntimeError):
+    """A mesma vaga já está no ar no Empregos, publicada a partir de outro anúncio."""
+
+    def __init__(self, publicada: OperacaoPublicacaoEmpregos) -> None:
+        self.publicada = publicada
+        super().__init__(
+            "a mesma vaga já foi publicada a partir de outro anúncio "
+            f"({publicada.anuncio_id}, estado {publicada.situacao.value}); nada foi enviado"
         )
 
 
@@ -103,14 +118,38 @@ class PublicadorEmpregos:
         # Configurações são verificadas antes de registrar que o HTTP começou.
         self._cliente.validar_configuracao_publicacao()
 
+        identidade = identidade_de_payload(
+            preparacao.payload,
+            dominio=(
+                preparacao.proveniencia_fonte.dominio
+                if preparacao.proveniencia_fonte is not None
+                else None
+            ),
+        )
         preparada = OperacaoPublicacaoEmpregos(
             vaga_id=vaga_id,
             anuncio_id=anuncio_id,
             external_job_posting_id=simulacao.external_job_posting_id,
             operation_type=simulacao.operation_type,
             payload_sha256=simulacao.payload_sha256,
+            assinatura_conteudo=identidade.assinatura if identidade else None,
+            assinatura_descricao_completa=identidade.assinatura_completa if identidade else None,
+            dominio_origem=identidade.dominio if identidade else None,
         )
-        reserva = self._repositorio.reservar(preparada)
+        # Conferir e reservar sob a trava: duas execuções simultâneas não
+        # conseguem, cada uma, não ver a outra e publicar a mesma vaga.
+        with self._repositorio.trava_publicacao():
+            # Última barreira contra a mesma vaga vinda de outro site: vale também
+            # para quem publica sem passar pela fila (scripts/publicar_vaga_empregos.py).
+            if identidade is not None:
+                publicada = encontrar_publicacao_da_mesma_vaga(
+                    self._repositorio.listar_ativas_por_assinatura(identidade.assinatura),
+                    identidade=identidade,
+                    external_job_posting_id=simulacao.external_job_posting_id,
+                )
+                if publicada is not None:
+                    raise VagaJaPublicadaPorOutraFonte(publicada)
+            reserva = self._repositorio.reservar(preparada)
         operacao = reserva.operacao
 
         if operacao.situacao is SituacaoPublicacaoEmpregos.SUCESSO:

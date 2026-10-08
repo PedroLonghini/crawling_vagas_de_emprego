@@ -1,0 +1,148 @@
+{
+  "entrada": "C:\\Users\\Inspirion\\Documents\\urls_10mil.txt",
+  "linhas_com_url": 10014,
+  "urls_prontas_para_coleta_e_publicacao": 9986,
+  "urls_rejeitadas": 28,
+  "rejeitadas": [
+    {
+      "linha": 308,
+      "url": "https://www.empregos.com.br/vaga/11600205/agente-funerario-em-campo-grande-ms",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 512,
+      "url": "https://www.empregos.com.br/vaga/11603747/analista-de-manutencao-pavimentos-congonhas-em-sao-paulo-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 529,
+      "url": "https://www.empregos.com.br/vaga/11827328/analista-de-tesouraria-senior-em-curitiba-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 540,
+      "url": "https://www.empregos.com.br/vaga/11721291/analista-operacional-de-seguranca-em-recife-pe",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 2729,
+      "url": "https://www.empregos.com.br/vaga/11666852/demonstrador-electrolux-em-brusque-sc",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 3288,
+      "url": "https://www.empregos.com.br/vaga/11831963/encarregado-a-de-safety-em-uberaba-mg",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 3856,
+      "url": "https://www.empregos.com.br/vaga/11782920/farmaceutico-em-pinhais-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 4952,
+      "url": "https://www.empregos.com.br/vaga/11732027/inspetor-de-medicao-de-espessura-em-tres-lagoas-ms",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6402,
+      "url": "https://www.empregos.com.br/profissao/acustico",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6403,
+      "url": "https://www.empregos.com.br/profissao/bamburista",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6404,
+      "url": "https://www.empregos.com.br/profissao/encapador-de-roletes",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6405,
+      "url": "https://www.empregos.com.br/profissao/meio-oficial-fresador",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6406,
+      "url": "https://www.empregos.com.br/profissao/modelista-de-fundicao",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6407,
+      "url": "https://www.empregos.com.br/profissao/montador-de-esquadrias",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6408,
+      "url": "https://www.empregos.com.br/profissao/operador-de-laminacao",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6409,
+      "url": "https://www.empregos.com.br/profissao/tecnico-de-tenis",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6524,
+      "url": "https://www.empregos.com.br/vaga/11677014/operador-de-drone-em-sao-luis-ma",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6561,
+      "url": "https://www.empregos.com.br/vaga/11666789/operador-de-manufatura-a-banco-de-talentos-electrolux-em-sao-jose-dos-pinhais-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 6962,
+      "url": "https://www.empregos.com.br/vaga/11715615/pesquisador-i-farmacotecnico-em-toledo-pr",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 7358,
+      "url": "https://www.empregos.com.br/vaga/11682530/preparador-tecnico-de-maquinas-setapista-em-aguai-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 7359,
+      "url": "https://www.empregos.com.br/vaga/11682543/preparador-tecnico-de-maquinas-setapista-em-sao-paulo-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 8058,
+      "url": "https://www.empregos.com.br/vaga/11606491/roupeiro-a-ohana-beach-park-resort-em-aquiraz-ce",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 8746,
+      "url": "https://www.empregos.com.br/vaga/11679287/supervisor-de-camara-fria-em-sao-paulo-sp",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 9126,
+      "url": "https://www.empregos.com.br/vaga/11779688/torneiro-fresador-ii-planejamento-controle-manutencao-em-lagoa-da-prata-mg",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 9387,
+      "url": "https://www.empregos.com.br/vaga/11650731/tubulador-em-navegantes-sc",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 9627,
+      "url": "https://www.empregos.com.br/vaga/11739313/vaga-de-marceneiro-em-brasilia-df",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 9767,
+      "url": "https://www.empregos.com.br/vaga/11846217/vendedora-de-loja-em-aquiraz-ce",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    },
+    {
+      "linha": 9912,
+      "url": "https://www.empregos.com.br/empresa/vix-logistica/e-115160",
+      "motivo": "Empregos: o Empregos é destino de publicação e nunca fonte do crawler"
+    }
+  ]
+}

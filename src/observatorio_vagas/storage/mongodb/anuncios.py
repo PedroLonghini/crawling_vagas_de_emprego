@@ -43,7 +43,7 @@ from observatorio_vagas.domain.anuncio import AnuncioVaga
 # - gupy;
 # - página de carreiras;
 # - JSON-LD.
-from observatorio_vagas.domain.enums import Fonte
+from observatorio_vagas.domain.enums import Fonte, StatusAnuncio
 
 # ResultadoEscrita informa quantos documentos foram:
 #
@@ -64,6 +64,20 @@ from observatorio_vagas.storage.mongodb.documents import (
 from observatorio_vagas.storage.mongodb.schema import (
     COLECAO_ANUNCIOS,
 )
+
+# Status decididos pela conferência de vagas removidas da origem
+# (scripts/conferir_vagas_removidas.py). Uma nova leitura da mesma vaga não os
+# desfaz: senão uma vaga já tirada do Empregos voltaria à fila de publicação.
+# Só a conferência reabre uma vaga; encerrar é sempre permitido.
+STATUS_PROTEGIDOS = (StatusAnuncio.ENCERRADO.value, StatusAnuncio.AUSENTE.value)
+
+
+def _filtro_troca_status(filtro: dict[str, object], status: str) -> dict[str, object]:
+    """Filtro que só troca o status quando a troca é permitida."""
+
+    if status == StatusAnuncio.ENCERRADO.value:
+        return {**filtro, "status": {"$ne": status}}
+    return {**filtro, "status": {"$nin": [*STATUS_PROTEGIDOS, status]}}
 
 
 class ErroRepositorioAnunciosMongoDB(RuntimeError):
@@ -132,6 +146,9 @@ class RepositorioAnunciosMongoDB:
         # Uma coleta mais antiga pode terminar depois de uma mais recente.
         # Nunca retrocedemos a última observação nesse caso.
         ultima_observacao = documento.pop("ultima_observacao_em")
+        # O status só entra na inserção; a troca é feita à parte (ver
+        # STATUS_PROTEGIDOS).
+        status = documento.pop("status")
 
         try:
             # find_one_and_update realiza tudo como uma operação atômica.
@@ -153,6 +170,7 @@ class RepositorioAnunciosMongoDB:
                     "$setOnInsert": {
                         "_id": id_novo,
                         "primeira_observacao_em": (primeira_observacao),
+                        "status": status,
                     },
                 },
                 # Se não existir, cria um novo documento.
@@ -160,6 +178,13 @@ class RepositorioAnunciosMongoDB:
                 # Devolve o documento depois da alteração.
                 return_document=ReturnDocument.AFTER,
             )
+            if documento_salvo is not None and documento_salvo.get("status") != status:
+                trocado = self._colecao.update_one(
+                    _filtro_troca_status(filtro, status),
+                    {"$set": {"status": status}},
+                )
+                if trocado.modified_count:
+                    documento_salvo["status"] = status
 
         except DuplicateKeyError as erro_original:
             # Normalmente significa que a mesma combinação
@@ -210,6 +235,8 @@ class RepositorioAnunciosMongoDB:
         # Esta lista receberá uma operação MongoDB
         # para cada anúncio entregue pelo crawler.
         operacoes: list[UpdateOne] = []
+        # Trocas de status vão num segundo lote, que respeita STATUS_PROTEGIDOS.
+        trocas_status: list[UpdateOne] = []
 
         for anuncio in anuncios:
             # Identidade externa do anúncio.
@@ -228,6 +255,7 @@ class RepositorioAnunciosMongoDB:
             # caso o anúncio ainda não exista.
             primeira_observacao = documento.pop("primeira_observacao_em")
             ultima_observacao = documento.pop("ultima_observacao_em")
+            status = documento.pop("status")
 
             # Preparamos a operação sem executá-la imediatamente.
             operacoes.append(
@@ -239,10 +267,14 @@ class RepositorioAnunciosMongoDB:
                         "$setOnInsert": {
                             "_id": id_novo,
                             "primeira_observacao_em": (primeira_observacao),
+                            "status": status,
                         },
                     },
                     upsert=True,
                 )
+            )
+            trocas_status.append(
+                UpdateOne(_filtro_troca_status(filtro, status), {"$set": {"status": status}})
             )
 
         try:
@@ -263,6 +295,15 @@ class RepositorioAnunciosMongoDB:
         except PyMongoError as erro_original:
             raise ErroRepositorioAnunciosMongoDB(
                 "não foi possível salvar o lote de anúncios"
+            ) from erro_original
+
+        try:
+            # Depois do primeiro lote, para que os anúncios novos já existam.
+            # Troca só de status não entra na contagem de atualizados.
+            self._colecao.bulk_write(trocas_status, ordered=False)
+        except PyMongoError as erro_original:
+            raise ErroRepositorioAnunciosMongoDB(
+                "não foi possível atualizar o status do lote de anúncios"
             ) from erro_original
 
         # upserted_count informa quantos anúncios eram novos.

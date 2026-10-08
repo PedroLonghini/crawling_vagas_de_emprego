@@ -1,0 +1,88 @@
+{
+  "catalogo": "config\\lote_10mil\\catalogo_fontes.csv",
+  "fontes_no_catalogo": 14058,
+  "fontes_mantidas": 12142,
+  "fontes_excluidas": 1916,
+  "excluidas_por_motivo": {
+    "descrição de cargo (salário médio, atribuições), sem vaga": 741,
+    "notícia, curso, produto ou institucional que nunca rendeu vaga": 410,
+    "produto, loja ou curso, não é página de vagas": 390,
+    "artigo datado sem nenhuma palavra de vaga na URL": 153,
+    "arquivo (PDF, documento ou imagem), não é página": 88,
+    "categoria, tag, autor ou feed de blog": 73,
+    "entrada repetida de agregador lido inteiro (fica uma só)": 43,
+    "artigo de lista editorial (ex.: '10 carreiras para...')": 14,
+    "site de vagas do exterior (vagas barradas como fora do Brasil)": 4
+  },
+  "linhas_invalidas_no_catalogo": 396,
+  "fontes_sem_nenhum_anuncio_no_mongo": 12466,
+  "fontes_com_anuncio_no_mongo": 1592,
+  "sem_anuncio_por_classe": {
+    "carreira": 7714,
+    "outra": 3456,
+    "editorial_ou_produto": 803,
+    "home": 493
+  },
+  "sem_anuncio_maiores_dominios": [
+    [
+      "cargos.com.br",
+      740
+    ],
+    [
+      "pt.linkedin.com",
+      122
+    ],
+    [
+      "linkedin.com",
+      46
+    ],
+    [
+      "bne.com.br",
+      39
+    ],
+    [
+      "jobijoba.com.br",
+      35
+    ],
+    [
+      "clickpetroleoegas.com.br",
+      31
+    ],
+    [
+      "gov.br",
+      27
+    ],
+    [
+      "www1.folha.uol.com.br",
+      23
+    ],
+    [
+      "atracaodetalentos.totvs.app",
+      23
+    ],
+    [
+      "carreira.inhire.com.br",
+      23
+    ],
+    [
+      "clickmuseus.com.br",
+      22
+    ],
+    [
+      "cursosimplifica.com.br",
+      20
+    ],
+    [
+      "brinks.wd5.myworkdayjobs.com",
+      19
+    ],
+    [
+      "agrobase.com.br",
+      18
+    ],
+    [
+      "ndmais.com.br",
+      18
+    ]
+  ]
+}

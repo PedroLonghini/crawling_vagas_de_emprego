@@ -1,5 +1,10 @@
 # Fontes verificadas em 08/09/2026
 
+> **Documento histórico (marcado em 07/10/2026).** O arquivo
+> `config/catalogo_fontes_republicaveis.csv` citado abaixo não existe mais; não há
+> catálogos paralelos. Os comandos com ele não funcionam. O catálogo de coleta atual
+> é `config/lote_10mil_triado/catalogo_fontes.csv` (ver README.md).
+
 ## Fonte nova cadastrada
 
 UnB — Editais de Concurso: https://dados.unb.br/dataset/editais-de-concurso

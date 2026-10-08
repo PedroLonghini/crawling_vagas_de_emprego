@@ -12,8 +12,10 @@ https://jobs.lever.co/empresa
 ```
 
 O crawler cria automaticamente o identificador, o nome provisório, o tipo de
-fonte e o limite seguro de páginas. URLs de domínios bloqueados, como Gupy,
-Indeed, Catho e InfoJobs/Pandapé, são ignoradas e aparecem no relatório.
+fonte e o limite seguro de páginas. URLs de domínios bloqueados (a lista vigente
+está em `src/observatorio_vagas/domain/politica_fonte.py`; inclui Gupy, Indeed,
+Catho, InfoJobs/Pandapé, Vagas.com e empregandobrasil.com.br) são ignoradas e
+aparecem no relatório.
 
 Uma URL nova fica habilitada para coleta, mas não para publicação. A publicação
 só é liberada depois que a autorização da empresa for registrada no processo de

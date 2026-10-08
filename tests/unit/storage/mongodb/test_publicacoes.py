@@ -9,14 +9,19 @@ from uuid import UUID
 
 import pytest
 from pymongo import DESCENDING, ReturnDocument
+from pymongo.errors import DuplicateKeyError
 
 from observatorio_vagas.domain.enums import SituacaoPublicacaoEmpregos
 from observatorio_vagas.domain.publicacao import OperacaoPublicacaoEmpregos
 from observatorio_vagas.storage.contracts import RepositorioPublicacoesEmpregos
+from observatorio_vagas.storage.mongodb import publicacoes as modulo_publicacoes
 from observatorio_vagas.storage.mongodb.publicacoes import (
+    COLECAO_TRAVAS,
+    NOME_TRAVA_PUBLICACAO,
     ConflitoPublicacaoMongoDB,
     RepositorioPublicacoesEmpregosMongoDB,
     TransicaoPublicacaoMongoDBInvalida,
+    TravaPublicacaoOcupada,
 )
 from observatorio_vagas.storage.mongodb.schema import (
     COLECAO_PUBLICACOES_EMPREGOS,
@@ -37,8 +42,7 @@ class CursorPublicacoesFalso:
 
     def sort(self, campo: str, direcao: int) -> CursorPublicacoesFalso:
         assert campo == "criado_em"
-        assert direcao == DESCENDING
-        self.documentos.sort(key=lambda item: item[campo], reverse=True)
+        self.documentos.sort(key=lambda item: item[campo], reverse=direcao == DESCENDING)
         return self
 
     def limit(self, quantidade: int) -> CursorPublicacoesFalso:
@@ -93,12 +97,48 @@ class ColecaoPublicacoesFalsa:
         return None
 
     def find(self, filtro: dict[str, object]) -> CursorPublicacoesFalso:
+        def casa(atual: object, esperado: object) -> bool:
+            if isinstance(esperado, dict) and "$in" in esperado:
+                return atual in esperado["$in"]
+            return atual == esperado
+
         documentos = [
             documento
             for documento in self.documentos.values()
-            if all(documento.get(campo) == valor for campo, valor in filtro.items())
+            if all(casa(documento.get(campo), valor) for campo, valor in filtro.items())
         ]
         return CursorPublicacoesFalso(documentos)
+
+
+class ColecaoTravasFalsa:
+    """Simula o upsert condicional usado pela trava de publicação."""
+
+    def __init__(self) -> None:
+        self.documentos: dict[str, dict[str, Any]] = {}
+
+    def update_one(
+        self,
+        filtro: dict[str, Any],
+        atualizacao: dict[str, dict[str, Any]],
+        *,
+        upsert: bool = False,
+    ) -> None:
+        atual = self.documentos.get(filtro["_id"])
+        if atual is None:
+            if upsert:
+                self.documentos[filtro["_id"]] = dict(atualizacao["$set"])
+            return
+        if "$or" in filtro:
+            livre = atual.get("dono") is None or (
+                atual.get("expira_em") is not None
+                and atual["expira_em"] < filtro["$or"][1]["expira_em"]["$lt"]
+            )
+        else:
+            livre = atual.get("dono") == filtro.get("dono")
+        if livre:
+            atual.update(atualizacao["$set"])
+        elif upsert:
+            raise DuplicateKeyError("trava ocupada")
 
 
 class BancoFalso:
@@ -106,9 +146,12 @@ class BancoFalso:
 
     def __init__(self) -> None:
         self.colecao = ColecaoPublicacoesFalsa()
+        self.travas = ColecaoTravasFalsa()
         self.nome_selecionado: str | None = None
 
-    def __getitem__(self, nome: str) -> ColecaoPublicacoesFalsa:
+    def __getitem__(self, nome: str) -> ColecaoPublicacoesFalsa | ColecaoTravasFalsa:
+        if nome == COLECAO_TRAVAS:
+            return self.travas
         self.nome_selecionado = nome
         return self.colecao
 
@@ -215,6 +258,108 @@ def test_rejeita_transicao_com_estado_anterior_desatualizado() -> None:
             enviando,
             situacao_anterior=SituacaoPublicacaoEmpregos.PREPARADA,
         )
+
+
+def _reservar_com_assinatura(
+    repositorio: RepositorioPublicacoesEmpregosMongoDB,
+    *,
+    numero: int,
+    assinatura: str,
+    criado_em: datetime,
+    situacao_final: SituacaoPublicacaoEmpregos | None = None,
+) -> OperacaoPublicacaoEmpregos:
+    operacao = OperacaoPublicacaoEmpregos(
+        id=UUID(f"97000000-0000-4000-8000-{numero:012d}"),
+        vaga_id=VAGA_ID,
+        anuncio_id=ANUNCIO_ID,
+        external_job_posting_id=f"VAGA-{numero}",
+        operation_type="CREATE",
+        payload_sha256="a" * 64,
+        assinatura_conteudo=assinatura,
+        criado_em=criado_em,
+        atualizado_em=criado_em,
+    )
+    preparada = repositorio.reservar(operacao).operacao
+    if situacao_final is None:
+        return preparada
+    enviando = repositorio.salvar_transicao(
+        preparada.iniciar_envio(momento=criado_em),
+        situacao_anterior=SituacaoPublicacaoEmpregos.PREPARADA,
+    )
+    return repositorio.salvar_transicao(
+        enviando.concluir(
+            situacao=situacao_final,
+            momento=criado_em,
+            status_http=201 if situacao_final is SituacaoPublicacaoEmpregos.SUCESSO else 400,
+        ),
+        situacao_anterior=SituacaoPublicacaoEmpregos.ENVIANDO,
+    )
+
+
+def test_lista_publicacoes_no_ar_pela_assinatura() -> None:
+    """Rejeitada fica de fora; preparada conta (na dúvida, não publicar de novo)."""
+
+    repositorio = RepositorioPublicacoesEmpregosMongoDB(BancoFalso())
+    assinatura = "e" * 64
+    recente = _reservar_com_assinatura(
+        repositorio,
+        numero=1,
+        assinatura=assinatura,
+        criado_em=DATA_FINAL,
+        situacao_final=SituacaoPublicacaoEmpregos.SUCESSO,
+    )
+    antiga = _reservar_com_assinatura(
+        repositorio, numero=2, assinatura=assinatura, criado_em=DATA_INICIAL
+    )
+    _reservar_com_assinatura(
+        repositorio,
+        numero=3,
+        assinatura=assinatura,
+        criado_em=DATA_ENVIO,
+        situacao_final=SituacaoPublicacaoEmpregos.REJEITADA,
+    )
+    _reservar_com_assinatura(repositorio, numero=4, assinatura="f" * 64, criado_em=DATA_ENVIO)
+
+    resultado = repositorio.listar_ativas_por_assinatura(assinatura.upper())
+
+    assert [operacao.id for operacao in resultado] == [antiga.id, recente.id]
+
+    with pytest.raises(ValueError, match="SHA-256"):
+        repositorio.listar_ativas_por_assinatura("nao-e-hash")
+
+
+def test_trava_impede_duas_publicacoes_ao_mesmo_tempo(monkeypatch) -> None:
+    """Enquanto um processo confere e reserva, outro espera (e desiste no prazo)."""
+
+    monkeypatch.setattr(modulo_publicacoes, "ESPERA_MAXIMA_TRAVA_S", 0.0)
+    banco = BancoFalso()
+    primeiro = RepositorioPublicacoesEmpregosMongoDB(banco)
+    segundo = RepositorioPublicacoesEmpregosMongoDB(banco)
+
+    with (
+        primeiro.trava_publicacao(),
+        pytest.raises(TravaPublicacaoOcupada),
+        segundo.trava_publicacao(),
+    ):
+        pass
+
+    # Liberada ao sair, inclusive depois de erro.
+    with pytest.raises(RuntimeError), segundo.trava_publicacao():
+        raise RuntimeError("falha no meio")
+    with primeiro.trava_publicacao():
+        assert banco.travas.documentos[NOME_TRAVA_PUBLICACAO]["dono"] is not None
+    assert banco.travas.documentos[NOME_TRAVA_PUBLICACAO]["dono"] is None
+
+
+def test_trava_vencida_de_processo_que_caiu_e_assumida() -> None:
+    banco = BancoFalso()
+    banco.travas.documentos[NOME_TRAVA_PUBLICACAO] = {
+        "dono": "processo-que-caiu",
+        "expira_em": datetime(2000, 1, 1, tzinfo=UTC),
+    }
+
+    with RepositorioPublicacoesEmpregosMongoDB(banco).trava_publicacao():
+        assert banco.travas.documentos[NOME_TRAVA_PUBLICACAO]["dono"] != "processo-que-caiu"
 
 
 def test_lista_historico_recente_da_vaga() -> None:
